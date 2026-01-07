@@ -22,23 +22,78 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# IDE
+# IDE & Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
-Thumbs.db
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
 
-# Project specific
-*.npy
-*.csv
-learned_data.json
+# Testing
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Environments
+.env
+.venv
+env.bak/
+venv.bak/
+
+# User-specific files
+*.bak
+*.tmp
+*.log
+*.out
+*.pid
+
+# Temporary files
+temp/
+tmp/
+*.temp
+
+# IDE launch configs
+.launch
+.classpath
+.factorypath
+
+# Debug files
+debug.log
+*.dmp
+
+# Miscellaneous
+.vagrant
+.pem
+*.pem
+.envrc
 

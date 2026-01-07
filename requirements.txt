@@ -1,0 +1,28 @@
+# Xiangqi Robot Training AI - Project Dependencies
+
+# Core Scientific Computing
+numpy>=1.21.0
+opencv-python>=4.5.0  # Computer vision for camera and board detection
+
+# GUI & Display
+pygame>=2.1.0  # Game interface and piece rendering
+
+# AI & Machine Learning
+ultralytics>=8.0.0  # YOLOv8 for piece detection from camera
+torch>=1.9.0  # PyTorch deep learning framework (required by ultralytics)
+torchvision>=0.10.0  # Computer vision utilities for PyTorch
+
+# Robot Control
+# Note: robot_sdk_core is a compiled C extension module built from robot_sdk_core.c
+# It requires Cython to compile
+Cython>=0.29.0  # Required for compiling robot_sdk_core.py
+
+# Data Processing
+json5>=0.9.0  # JSON processing for game history and configuration
+
+# Optional/Development
+# Uncomment below if you want to use these tools
+# pytest>=6.2.0  # For testing
+# black>=21.0  # Code formatting
+# flake8>=3.9.0  # Linting
+
