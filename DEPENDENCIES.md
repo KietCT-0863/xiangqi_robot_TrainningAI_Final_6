@@ -254,7 +254,7 @@ DRY_RUN = False  # Uses camera for detection, controls real robot
 ## VERSION COMPATIBILITY
 
 **Tested with:**
-- Python 3.10, 3.11, 3.12, 3.13 (evidenced by pycache files)
+- Python 3.10, 3.11 (newer versions removed the disutil function making it unavailable for téting)
 - Windows 10/11
 - PyTorch 1.9-2.0+
 - OpenCV 4.5-4.9+
