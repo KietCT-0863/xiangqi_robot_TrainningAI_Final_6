@@ -144,17 +144,33 @@ except Exception as e:
 model = None
 cap = None
 if not config.DRY_RUN:
-    # LƯU Ý: KIỂM TRA LẠI ĐƯỜNG DẪN MODEL TRÊN MÁY BẠN
-    MODEL_PATH = r"D:\xiangqi_robot_TrainningAI_Final_6\models_chinesechess1\content\runs\detect\train\weights\best.pt"
+    # Use path relative to this script file
+    MODEL_PATH = str(Path(__file__).parent / "models_chinesechess1" / "content" / "runs" / "detect" / "train" / "weights" / "best.pt")
     try:
         model = YOLO(MODEL_PATH)
-    except:
-        print("⚠️ Warning: Could not load model. Check the path!")
+        print(f"✅ Model loaded: {MODEL_PATH}")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not load model: {e}")
         # sys.exit() # Uncomment if model is required
 
-    cap = cv2.VideoCapture(int(os.environ.get("VIDEO_INDEX", "1")), cv2.CAP_DSHOW)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    # Try camera indices from config, then fallback to 0, 1, 2
+    _cam_index = int(os.environ.get("VIDEO_INDEX", str(config.VIDEO_SOURCE)))
+    cap = None
+    for _idx in [_cam_index] + [i for i in [0, 1, 2] if i != _cam_index]:
+        _cap_try = cv2.VideoCapture(_idx, cv2.CAP_DSHOW)
+        if _cap_try.isOpened():
+            cap = _cap_try
+            print(f"✅ Camera opened at index {_idx}")
+            break
+        else:
+            _cap_try.release()
+            print(f"⚠️ Camera index {_idx} failed, trying next...")
+    if cap is None:
+        print("❌ Lỗi: Không mở được Camera! Kiểm tra lại kết nối webcam.")
+    else:
+        # Must match calibrate_tool.py resolution so perspective.npy coordinates align
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
 PERSPECTIVE_PATH = Path(__file__).parent / "perspective.npy"
 CLASS_ID_TO_INTERNAL_NAME = {
@@ -248,29 +264,102 @@ def draw_highlight():
         pygame.draw.circle(screen, (220, 0, 0), (fx, fy), PIECE_RADIUS + 6, 4)
 
 def calibrate_perspective_camera(cap, save_path):
-    if config.DRY_RUN: return 
-    pts = []
+    if config.DRY_RUN: return
+
+    # --- Thread-based capture queue (same as calibrate_tool.py) ---
+    import queue as _queue
+    cal_q = _queue.Queue(maxsize=2)
+    cal_stop = [False]
+    def _cal_capture():
+        while not cal_stop[0]:
+            ret, frm = cap.read()
+            if ret:
+                if not cal_q.empty():
+                    try: cal_q.get_nowait()
+                    except _queue.Empty: pass
+                cal_q.put(frm)
+            time.sleep(0.005)
+    import threading as _threading
+    _threading.Thread(target=_cal_capture, daemon=True).start()
+    time.sleep(0.5)  # Wait for camera to warm up
+
+    points = []
+    def mouse_callback(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN and len(points) < 4:
+            points.append((x, y))
+
     window = "CALIBRATE"
     cv2.namedWindow(window)
-    cv2.setMouseCallback(window, lambda e, x, y, f, p: pts.append((x, y)) if e == 1 and len(pts) < 4 else None)
-    print("⚠️ Click 4 corners: TopLeft -> TopRight -> BotRight -> BotLeft")
+    cv2.setMouseCallback(window, mouse_callback)
+
+    print("\n=== HƯỚNG DẪN CLICK (QUAN TRỌNG) ===")
+    print("👉 Click lần lượt 4 góc bàn cờ thật trên màn hình:")
+    print("   1️⃣  Góc Xe Đen (Trái)")
+    print("   2️⃣  Góc Xe Đen (Phải)")
+    print("   3️⃣  Góc Xe Đỏ (Phải)")
+    print("   4️⃣  Góc Xe Đỏ (Trái)")
+    print("---------------------------------------------")
+    print("⌨️  Phím tắt: 'R'=Làm lại | 'S'=Lưu file | 'Q'=Thoát")
+
+    M = None
     while True:
-        ret, frame = cap.read()
-        if not ret: break
-        for i, p in enumerate(pts):
-            cv2.circle(frame, p, 6, (0, 255, 0), -1)
-            cv2.putText(frame, str(i + 1), p, 1, 2, (0, 255, 0))
-        cv2.imshow(window, frame)
-        if cv2.waitKey(1) == 27 or len(pts) == 4: break
-    if len(pts) == 4:
-        dst = np.array([[0, 0], [8, 0], [8, 9], [0, 9]], dtype=np.float32)
-        M = cv2.getPerspectiveTransform(np.array(pts, dtype=np.float32), dst)
-        np.save(save_path, M)
-        print(f"Saved calibration file: {save_path}")
+        try:
+            frame = cal_q.get(timeout=0.1)
+        except _queue.Empty:
+            continue
+
+        display = frame.copy()  # Camera is BGR; cv2.imshow expects BGR — display as-is
+
+        # Draw clicked points
+        for i, p in enumerate(points):
+            cv2.circle(display, p, 5, (0, 0, 255), -1)
+            cv2.putText(display, str(i + 1), (p[0] + 10, p[1]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+        # When 4 points are set, compute matrix and draw yellow grid overlay
+        if len(points) == 4:
+            src = np.array(points, dtype=np.float32)
+            dst = np.array([
+                [0, 0],  # 1. Đen Trái
+                [8, 0],  # 2. Đen Phải
+                [8, 9],  # 3. Đỏ Phải
+                [0, 9],  # 4. Đỏ Trái
+            ], dtype=np.float32)
+            M = cv2.getPerspectiveTransform(src, dst)
+            try:
+                inv_M = np.linalg.inv(M)
+                # Draw 10 horizontal rows
+                for r in range(10):
+                    p1 = cv2.perspectiveTransform(np.array([[[0, r]]], dtype=np.float32), inv_M)[0][0]
+                    p2 = cv2.perspectiveTransform(np.array([[[8, r]]], dtype=np.float32), inv_M)[0][0]
+                    cv2.line(display, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (0, 255, 255), 1)
+                # Draw 9 vertical columns
+                for c in range(9):
+                    p1 = cv2.perspectiveTransform(np.array([[[c, 0]]], dtype=np.float32), inv_M)[0][0]
+                    p2 = cv2.perspectiveTransform(np.array([[[c, 9]]], dtype=np.float32), inv_M)[0][0]
+                    cv2.line(display, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (0, 255, 255), 1)
+                cv2.putText(display, "OK? Bam 'S' de Luu", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            except:
+                pass
+
+        cv2.imshow(window, display)
+
+        key = cv2.waitKey(1)
+        if key == ord('q'):
+            break
+        elif key == ord('r'):  # Reset
+            points.clear()
+            M = None
+            print("🔄 Đã xóa điểm, hãy click lại.")
+        elif key == ord('s') and M is not None:  # Save
+            np.save(save_path, M)
+            print(f"✅ ĐÃ LƯU THÀNH CÔNG: {save_path}")
+            break
+
+    cal_stop[0] = True
     cv2.destroyWindow(window)
 
 # Hàm này dùng để chuyển đổi tọa độ YOLO sang ô cờ
-def detections_to_grid_occupancy(detections, M, original_w=1280, original_h=720, model_input_w=640):
+def detections_to_grid_occupancy(detections, M, original_w=1920, original_h=1080, model_input_w=640):
     grid = [["." for _ in range(NUM_COLS)] for _ in range(NUM_ROWS)]
     if M is None: return grid
     
@@ -428,7 +517,8 @@ while running:
         detections = []
         if ret:
             try:
-                results = model.predict(frame, conf=0.35, iou=0.45, verbose=False)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # BGR→RGB for YOLO
+                results = model.predict(frame_rgb, conf=0.35, iou=0.45, verbose=False)
                 for box in results[0].boxes:
                     cls = int(box.cls[0])
                     if cls in CLASS_ID_TO_INTERNAL_NAME:
@@ -445,7 +535,7 @@ while running:
                             pt_grid = np.array([[[float(c_debug), float(r_debug)]]], dtype=np.float32)
                             pt_pixel = cv2.perspectiveTransform(pt_grid, M_inv)[0][0]
                             cv2.circle(frame, (int(pt_pixel[0]), int(pt_pixel[1])), 3, (0, 0, 255), -1)
-                cv2.imshow("Camera Monitor", frame)
+                cv2.imshow("Camera Monitor", frame)  # frame stays BGR for cv2.imshow
             except: pass
         if cv2.waitKey(1) == ord("q"): running = False
 
@@ -495,8 +585,9 @@ while running:
              ret, frame_check = cap.read()
              if ret:
                  try:
+                     frame_check_rgb = cv2.cvtColor(frame_check, cv2.COLOR_BGR2RGB)  # BGR→RGB for YOLO
                      # Quét lại bàn cờ
-                     results = model.predict(frame_check, conf=0.35, iou=0.45, verbose=False)
+                     results = model.predict(frame_check_rgb, conf=0.35, iou=0.45, verbose=False)
                      detections_check = []
                      for box in results[0].boxes:
                          cls = int(box.cls[0])
