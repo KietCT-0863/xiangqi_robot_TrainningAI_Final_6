@@ -11,12 +11,12 @@ from ultralytics import YOLO
 # ==========================================
 VIDEO_SOURCE  = 1          # Camera index
 DISPLAY_SCALE = 1.5        # Display zoom
-CONF          = 0.3        # Detection confidence threshold
-IOU           = 0.35       # NMS IoU threshold
+CONF          = 0.5        # Detection confidence threshold
+IOU           = 0.45      # NMS IoU threshold
 
 # Path to the newly trained YOLO26 model — auto-selects latest run folder
 _SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
-_RUNS_BASE   = os.path.join(_SCRIPT_DIR, "..", "runs", "detect", "chess_vision")
+_RUNS_BASE   = os.path.join(_SCRIPT_DIR, ".", "runs", "detect", "chess_vision")
 
 def _find_latest_run(base: str, prefix: str = "yolo26_occupancy_run") -> str:
     """Return the weights/best.pt path from the most recently modified run folder."""
