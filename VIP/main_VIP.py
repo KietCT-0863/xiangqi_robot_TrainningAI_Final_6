@@ -31,6 +31,12 @@ import sound_player
 # IMPORT PIKAFISH (thay thế ai.py)
 from pikafish_engine import PikafishEngine
 
+# IMPORT FEN UTILITIES
+from fen_utils import board_array_to_fen, fen_to_board_array, INITIAL_FEN
+
+# IMPORT AI CONTROLLER
+from ai_controller import AIController
+
 # IMPORT BOOK
 try:
     import ai_book
@@ -75,86 +81,7 @@ def _kill_zombie_processes():
 
 _kill_zombie_processes()
 
-# ==========================================
-# 1. FEN CONVERSION FUNCTIONS
-# ==========================================
-
-# Mapping: internal piece name → FEN character
-_PIECE_TO_FEN = {
-    'r_K': 'K', 'r_A': 'A', 'r_E': 'B', 'r_N': 'N',
-    'r_R': 'R', 'r_C': 'C', 'r_P': 'P',
-    'b_K': 'k', 'b_A': 'a', 'b_E': 'b', 'b_N': 'n',
-    'b_R': 'r', 'b_C': 'c', 'b_P': 'p',
-}
-
-# Reverse mapping: FEN character → internal piece name
-_FEN_TO_PIECE = {v: k for k, v in _PIECE_TO_FEN.items()}
-
-def board_array_to_fen(board, color='r', move_number=1):
-    """Convert 10x9 board array + active color → FEN string.
-    
-    Args:
-        board: 10x9 list-of-lists (our format)
-        color: 'r' for Red to move, 'b' for Black to move
-        move_number: full move counter
-    Returns:
-        FEN string, e.g. "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
-    """
-    rows = []
-    for r in range(10):
-        row_str = ''
-        empty = 0
-        for c in range(9):
-            p = board[r][c]
-            if p == '.':
-                empty += 1
-            else:
-                if empty:
-                    row_str += str(empty)
-                    empty = 0
-                fen_char = _PIECE_TO_FEN.get(p)
-                if fen_char is None:
-                    raise ValueError(f"Unknown piece: '{p}' at board[{r}][{c}]")
-                row_str += fen_char
-        if empty:
-            row_str += str(empty)
-        rows.append(row_str)
-
-    fen_color = 'w' if color == 'r' else 'b'
-    return f"{'/'.join(rows)} {fen_color} - - 0 {move_number}"
-
-def fen_to_board_array(fen):
-    """Convert FEN string → 10x9 board array + active color.
-    
-    Returns:
-        (board, color) where board is 10x9 list, color is 'r' or 'b'
-    """
-    parts = fen.split(' ')
-    ranks = parts[0].split('/')
-    color = 'r' if parts[1] == 'w' else 'b'
-    
-    board = []
-    for rank_str in ranks:
-        row = []
-        for ch in rank_str:
-            if ch.isdigit():
-                row.extend(['.'] * int(ch))
-            else:
-                piece = _FEN_TO_PIECE.get(ch)
-                if piece is None:
-                    raise ValueError(f"Unknown FEN character: '{ch}'")
-                row.append(piece)
-        if len(row) != 9:
-            raise ValueError(f"Invalid rank length: {len(row)} (expected 9)")
-        board.append(row)
-    
-    if len(board) != 10:
-        raise ValueError(f"Invalid number of ranks: {len(board)} (expected 10)")
-    
-    return board, color
-
-# FEN vị trí ban đầu chuẩn
-INITIAL_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
+# (FEN functions được tách ra file fen_utils.py)
 
 # ==========================================
 # 2. KHỞI TẠO PYGAME + RENDERER
@@ -259,6 +186,9 @@ try:
 except Exception as e:
     print(f"⚠️ Pikafish init error: {e}")
     engine = None
+
+# Wrap engine trong AIController
+ai_ctrl = AIController(engine, config)
 
 # --- LOAD MODEL YOLO ---
 model = None
@@ -622,17 +552,7 @@ try:
 
                 def _ai_worker():
                     global ai_result
-                    try:
-                        if engine is None:
-                            print("[AI] ❌ Pikafish engine chưa khởi động! Kiểm tra file exe trong thư mục pikafish/.")
-                            ai_result = None
-                            return
-                        _think_ms = config.PIKAFISH_THINK_MS
-                        ai_result = engine.pick_best_move(board_snapshot, "b", movetime_ms=_think_ms)
-                    except Exception as e:
-                        print(f"[AI Thread] Error: {e}")
-                        traceback.print_exc()
-                        ai_result = None
+                    ai_result = ai_ctrl.pick_move(board_snapshot, color="b")
 
                 ai_thread = threading.Thread(target=_ai_worker, daemon=True)
                 ai_thread.start()
