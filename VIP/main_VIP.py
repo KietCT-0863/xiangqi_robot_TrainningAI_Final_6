@@ -242,28 +242,23 @@ except Exception as e:
     src_pts_fake = np.array([[200, -100], [520, -100], [520, 260], [200, 260]], dtype=np.float32)
     robot.set_perspective_matrix(cv2.getPerspectiveTransform(dst_pts_logic, src_pts_fake))
 
-# --- KHỞI TẠO PIKAFISH ENGINE ---
+# --- KHỜI TẠO PIKAFISH ENGINE (bắt buộc) ---
 engine = None
-if not config.DRY_RUN or True:  # Pikafish hoạt động cả DRY_RUN
-    try:
-        _pikafish_exe = getattr(config, 'PIKAFISH_EXE', None)
-        _pikafish_nnue = getattr(config, 'PIKAFISH_NNUE', None)
-        
-        if _pikafish_exe and os.path.isfile(_pikafish_exe):
-            engine = PikafishEngine(_pikafish_exe)
-            engine.start(nnue_path=_pikafish_nnue)
-            print("✅ Pikafish engine started!")
-        else:
-            print(f"⚠️ Pikafish exe not found at: {_pikafish_exe}")
-            print("   → Fallback: sẽ dùng ai.py nếu có")
-            try:
-                import ai as ai_fallback
-                print("   → ai.py loaded as fallback")
-            except ImportError:
-                print("   ❌ Không có ai.py fallback. AI sẽ không hoạt động!")
-    except Exception as e:
-        print(f"⚠️ Pikafish init error: {e}")
-        engine = None
+try:
+    _pikafish_exe  = config.PIKAFISH_EXE
+    _pikafish_nnue = config.PIKAFISH_NNUE
+
+    if os.path.isfile(_pikafish_exe):
+        engine = PikafishEngine(_pikafish_exe)
+        engine.start(nnue_path=_pikafish_nnue)
+        print(f"✅ Pikafish engine started! (think={config.PIKAFISH_THINK_MS}ms)")
+    else:
+        print(f"❌ Pikafish exe KHÔNG tìm thấy: {_pikafish_exe}")
+        print("   ↳ Hãy tải Pikafish vào thư mục pikafish/ rồi chạy lại!")
+        print("   ↳ https://github.com/official-pikafish/Pikafish/releases")
+except Exception as e:
+    print(f"⚠️ Pikafish init error: {e}")
+    engine = None
 
 # --- LOAD MODEL YOLO ---
 model = None
@@ -628,17 +623,12 @@ try:
                 def _ai_worker():
                     global ai_result
                     try:
-                        if engine is not None:
-                            # Pikafish: gửi FEN trực tiếp
-                            _think_ms = getattr(config, 'PIKAFISH_THINK_MS', 3000)
-                            ai_result = engine.pick_best_move(board_snapshot, "b", movetime_ms=_think_ms)
-                        else:
-                            # Fallback ai.py
-                            try:
-                                ai_result = ai_fallback.pick_best_move(board_snapshot, "b")
-                            except:
-                                print("[AI] ❌ No AI engine available!")
-                                ai_result = None
+                        if engine is None:
+                            print("[AI] ❌ Pikafish engine chưa khởi động! Kiểm tra file exe trong thư mục pikafish/.")
+                            ai_result = None
+                            return
+                        _think_ms = config.PIKAFISH_THINK_MS
+                        ai_result = engine.pick_best_move(board_snapshot, "b", movetime_ms=_think_ms)
                     except Exception as e:
                         print(f"[AI Thread] Error: {e}")
                         traceback.print_exc()
