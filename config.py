@@ -44,7 +44,7 @@ AI_DEPTH = 30          # Độ sâu mặc định (sẽ bị ghi đè bởi logi
 # Đặt cả 2 file vào thư mục: <project_root>/pikafish/
 import os as _os
 _PIKAFISH_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'pikafish')
-PIKAFISH_EXE  = _os.path.join(_PIKAFISH_DIR, 'pikafish-windows-x86-64-avx2.exe')
+PIKAFISH_EXE  = _os.path.join(_PIKAFISH_DIR, 'pikafish-avx2.exe')
 PIKAFISH_NNUE = _os.path.join(_PIKAFISH_DIR, 'pikafish.nnue')
 PIKAFISH_THINK_MS = 3000  # Thời gian suy nghĩ mỗi nước (milliseconds)
 
