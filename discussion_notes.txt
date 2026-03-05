@@ -140,3 +140,404 @@ VÍ DỤ:
     → Cần test Tool DO2 để xác nhận gripper đấu ở đâu
 
 ================================================================================
+
+# TÀI LIỆU KIẾN TRÚC: GIẢI QUYẾT RỦI RO BẮT QUÂN (BLIND CAPTURE RESOLUTION)
+
+## 1. Phát Biểu Vấn Đề (The Edge Case)
+Hệ thống thị giác hiện tại sử dụng YOLO26 với kiến trúc 1-class ("có quân" hoặc "không có quân"). Mặc dù giải pháp này khắc phục triệt để lỗi nhận diện do ánh sáng kém và bóng râm (tăng confidence từ 0.35 lên >0.70), nó tạo ra một điểm mù logic cho State Machine: *Hệ thống hoàn toàn mù màu và mù loại quân.*
+
+Trong kịch bản có một quân bị bắt (bị ăn), camera nhị phân chỉ nhận diện được sự thay đổi ở một đầu: 
+* *Ô xuất phát:* Trạng thái chuyển từ 1 (có quân) thành 0 (trống).
+* *Ô đích:* Trạng thái giữ nguyên 1 (vì quân cũ bị lấy ra, quân mới thế vào).
+
+Nếu Engine FEN báo cáo có nhiều hơn một nước đi hợp lệ có thể dẫn đến việc ăn quân ở ô xuất phát đó, hệ thống nhị phân sẽ bị sập vì không biết đích đến thực sự nằm ở đâu.
+
+## 2. Giải Pháp Kiến Trúc (The Solution)
+Bảo toàn kiến trúc 1-class để giữ hiệu năng phần cứng cho GPU RTX 3060 Mobile. Rủi ro này sẽ được giải quyết bằng thuật toán *Classical Pixel Differencing* tại tầng xử lý ảnh (OpenCV). 
+
+Cấu trúc giải quyết: Trí tuệ nhân tạo (YOLO) tìm tọa độ, Logic Game (FEN) cô lập các biến số, và Toán học cổ điển (OpenCV) chốt kết quả.
+
+### Thuật Toán Cốt Lõi:
+1. *Truy Xuất FEN:* Khi YOLO báo mất quân nhưng không có quân mới xuất hiện ở ô trống, gọi Pikafish để lấy danh sách các ô đích (Candidate Squares) hợp lệ.
+2. *Lưu Trữ Cache:* Vòng lặp main.py luôn duy trì prev_frame (ảnh trước khi người chơi đi) và curr_frame (ảnh hiện tại).
+3. *Nghịch Đảo Ma Trận:* Sử dụng ma trận Perspective nghịch đảo để map tọa độ logic (col, row) ngược lại thành khung Bounding Box [x1, y1, x2, y2] trên camera gốc.
+4. *Tính Toán AbsDiff:* Cắt (crop) hình ảnh của các ô đích tiềm năng từ cả hai frame, chuyển sang ảnh xám (Grayscale), và chạy hàm cv2.absdiff. 
+5. *Chốt Tọa Độ:* Ô nào có tổng điểm thay đổi pixel (score) lớn nhất (do có sự xê dịch vật lý, khác biệt ký tự khắc, hoặc đổi màu sơn) chính là ô đích thực sự.
+
+## 3. Mã Nguồn Triển Khai (Implementation)
+
+```python
+import cv2
+import numpy as np
+
+def resolve_capture_ambiguity(prev_frame, curr_frame, candidate_squares, inv_matrix):
+    """
+    candidate_squares: Danh sách các tuple (col, row) từ FEN engine
+    inv_matrix: Ma trận nghịch đảo từ cv2.invert(perspective_matrix)
+    """
+    highest_diff = 0
+    actual_destination = None
+
+    for (col, row) in candidate_squares:
+        # 1. Map tọa độ logic về Bounding Box pixel thực tế trên camera
+        # (Cần viết thêm hàm get_pixel_box_from_grid)
+        x1, y1, x2, y2 = get_pixel_box_from_grid(col, row, inv_matrix)
+        
+        # 2. Crop đúng ô cờ đó từ hai mốc thời gian
+        old_crop = prev_frame[y1:y2, x1:x2]
+        new_crop = curr_frame[y1:y2, x1:x2]
+        
+        # 3. Loại bỏ nhiễu ánh sáng màu bằng Grayscale
+        old_gray = cv2.cvtColor(old_crop, cv2.COLOR_BGR2GRAY)
+        new_gray = cv2.cvtColor(new_crop, cv2.COLOR_BGR2GRAY)
+        
+        # 4. Tính ma trận độ lệch tuyệt đối
+        diff = cv2.absdiff(old_gray, new_gray)
+        
+        # 5. Tính tổng điểm thay đổi
+        score = np.sum(diff)
+        
+        if score > highest_diff:
+            highest_diff = score
+            actual_destination = (col, row)
+
+    return actual_destination
+
+================================================================================
+
+# TÀI LIỆU MODULE: VIP/snapshot_detector.py
+# Cập nhật: 2026-03-04
+
+## Mô Tả Tổng Quát
+Module phát hiện nước đi của người chơi bằng cách so sánh 2 snapshot camera
+(T1: trước khi đi, T2: sau khi bấm SPACE). KHÔNG truy cập camera trực tiếp —
+nhận frame + detections từ CameraMonitor.
+
+Phụ thuộc:
+  - cv2 (OpenCV): perspective transform, absdiff
+  - perspective.npy: ma trận hiệu chỉnh camera (4 góc bàn cờ)
+  - xiangqi.py: validate nước đi theo luật cờ Tướng
+  - YOLO (1-class): chỉ detect "có quân" / "không có" — KHÔNG nhận diện màu/loại
+
+## Public API
+
+  capture_baseline(frame, detections)
+    → Lưu T1 snapshot: occupancy grid (10x9 bool) + raw frame BGR
+    → Gọi sau khi AI đi xong và bàn cờ đã ổn định
+
+  detect_move(frame, detections, board)
+    → Chụp T2, so sánh với T1, trả về (src, dst, piece_name)
+    → Gọi khi người chơi bấm SPACE
+    → board = bộ nhớ FEN biết quân nào ở đâu
+
+  has_baseline()    → Kiểm tra đã có T1 chưa
+  clear_baseline()  → Xóa T1 (khi reset game)
+  get_baseline_grid() → Lấy occupancy grid T1
+
+## Thuật Toán Phát Hiện Nước Đi (_compare_snapshots)
+
+4 lớp ưu tiên, xử lý từ trên xuống, trả về ngay khi tìm được kết quả:
+
+  [LỚP 1] valid_moves == 1
+    → Occupancy grid cho thấy đúng 1 cặp src/dst hợp lệ
+    → Return ngay (chắc chắn nhất)
+
+  [LỚP 2] valid_moves > 1 (Ambiguous)
+    → Dùng pixel absdiff tiebreaker: so sánh từng ô đích candidate
+    → Ô có thay đổi pixel lớn nhất = ô đích thật
+    → Fallback: Manhattan distance nếu frame=None hoặc absdiff thất bại
+
+  [LỚP 3] YOLO miss hoàn toàn — cả đỏ src VÀ đen dst đều biến mất
+    → Đúng 1 đỏ mất + đúng 1 đen mất → kết luận ngay (ăn quân 2 biến mất)
+
+  [LỚP 4] YOLO miss dst — chỉ thấy đỏ src biến mất
+    → Quét toàn bộ quân đen hợp lệ trên board (theo luật cờ)
+    → Pixel absdiff từng ô đen candidate → chọn ô thay đổi nhiều nhất
+    → Đây là "Blind Capture Resolution" theo thiết kế trong notes
+
+  [THẤT BẠI] Không tìm được → return (None, None, None)
+    → Main loop hiển thị lỗi, yêu cầu bấm SPACE lại
+
+## Kỹ Thuật Pixel Absdiff (_resolve_capture_ambiguity)
+
+  1. Load perspective.npy → tính inverse matrix (grid → pixel)
+  2. Với mỗi ô candidate (col, row):
+     a. Map tọa độ ô về bounding box pixel (_get_pixel_box_from_grid)
+     b. Crop vùng ô đó từ baseline_frame (T1) và curr_frame (T2)
+     c. Chuyển sang Grayscale (loại nhiễu ánh sáng màu)
+     d. cv2.absdiff → tính tổng pixel thay đổi (score)
+  3. Ô có score cao nhất = ô đích thực sự
+
+## Cập Nhật Lịch Sử
+
+  v1 (ban đầu): Chỉ có occupancy grid + Manhattan distance tiebreaker
+  v2 (2026-03-04): Thêm Blind Capture Resolution (pixel absdiff) cho lớp 4
+  v3 (2026-03-04): Thay Manhattan tiebreaker (lớp 2) bằng pixel absdiff
+                   → Đúng với thiết kế gốc trong discussion_notes.txt
+                   → Manhattan chỉ còn là safety fallback khi frame=None
+
+  LÝ DO THAY MANHATTAN BẰNG PIXEL ABSDIFF:
+
+  [1] Manhattan KHÔNG có trong thiết kế gốc
+      Discussion_notes.txt chỉ mô tả pixel absdiff để giải quyết ambiguity.
+      Manhattan được thêm vào ngoài kế hoạch, không có cơ sở lý thuyết.
+
+  [2] Manhattan dựa vào heuristic sai
+      Giả định "quân đi gần hơn = đúng hơn" không đúng với cờ Tướng.
+      Ví dụ: Xe (Rook) thường đi xa, Xe đi 6 ô thẳng là hoàn toàn bình thường.
+      Manhattan sẽ sai trong trường hợp này.
+
+  [3] Pixel absdiff dựa vào thực tế camera
+      Ô nào có quân đỏ đặt vào sẽ thay đổi pixel thực sự.
+      Không cần giả định — chỉ cần so sánh ảnh T1 và T2.
+
+  [4] Manhattan và pixel absdiff đều có điểm yếu
+      Manhattan: sai khi quân đi xa.
+      Pixel absdiff: nhạy với ánh sáng thay đổi, bóng tay.
+      → Giải pháp: dùng pixel absdiff làm chính,
+                   giữ Manhattan làm safety fallback (frame=None hoặc lỗi).
+
+================================================================================
+
+# TÀI LIỆU MODULE: VIP/calibrate_camera.py
+# Cập nhật: 2026-03-05
+
+## Mô Tả Tổng Quát
+Module hiệu chỉnh perspective camera bằng cách cho người dùng click 4 góc
+bàn cờ thật trên màn hình. Kết quả là file perspective.npy (ma trận 3x3)
+được dùng bởi CameraMonitor và SnapshotDetector để map tọa độ pixel ↔ ô cờ.
+
+Chỉ có 1 hàm duy nhất: calibrate_perspective_camera(cap, save_path)
+
+## Luồng Hoạt Động
+
+  [B1] WARM UP camera
+       → Đọc 60 frame bỏ đi (~2 giây)
+       → Camera USB cần thời gian ổn định, tránh frame đen đầu vào
+
+  [B2] Chạy background thread đọc camera liên tục
+       → Hiển thị live feed lên cửa sổ "CALIBRATE"
+       → Dùng Queue(maxsize=2) để không bị lag
+
+  [B3] Người dùng click chuột 4 góc bàn cờ theo đúng thứ tự:
+       [1] Góc Xe Đen (Trái)  → tương ứng grid (0, 0)
+       [2] Góc Xe Đen (Phải)  → tương ứng grid (8, 0)
+       [3] Góc Xe Đỏ (Phải)   → tương ứng grid (8, 9)
+       [4] Góc Xe Đỏ (Trái)   → tương ứng grid (0, 9)
+
+  [B4] Khi đủ 4 điểm:
+       → Tính M = cv2.getPerspectiveTransform(src_pixel, dst_grid)
+       → Tính inv_M = np.linalg.inv(M)
+       → Vẽ preview lưới 10 hàng x 9 cột lên camera để kiểm tra
+
+  [B5] Phím tắt:
+       R → Xóa hết điểm, click lại từ đầu
+       S → Lưu perspective.npy, kết thúc
+       Q → Thoát không lưu (M = None)
+
+## Output
+
+  File: perspective.npy (ma trận 3x3 float32)
+  Ý nghĩa: M[pixel → grid]
+    cv2.perspectiveTransform(pixel_point, M) → (col, row) trên bàn cờ
+  Được dùng bởi:
+    - CameraMonitor: vẽ lưới overlay, map quân về ô cờ
+    - SnapshotDetector: build occupancy grid, pixel absdiff (qua inv_M)
+
+## Lưu Ý Quan Trọng
+
+  - Phải warm up TRƯỚC khi chạy thread, không chạy song song
+    (race condition trên cv2.VideoCapture gây frame đen)
+  - Thứ tự click 4 góc PHẢI đúng (Đen Trái → Đen Phải → Đỏ Phải → Đỏ Trái)
+    sai thứ tự → lưới bị lật/méo → detect sai ô
+  - Trong DRY_RUN mode: hàm return None ngay, không hiển thị cửa sổ
+
+================================================================================
+
+# TÀI LIỆU MODULE: VIP/board_renderer.py
+# Cập nhật: 2026-03-05
+
+## Mô Tả Tổng Quát
+Module render giao diện bàn cờ Tướng trên Pygame. Không chứa logic game,
+chỉ đảm nhận việc hiển thị. Được import bởi main_VIP.py.
+
+## Hằng Số Export (module-level)
+
+  SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600   → kích thước cửa sổ Pygame
+  SQUARE_SIZE = 40                          → kích thước 1 ô cờ (pixel)
+  NUM_COLS, NUM_ROWS                        → lấy từ xiangqi.py (9, 10)
+  START_X, START_Y                          → góc trên trái bàn cờ (căn giữa màn hình)
+  BTN_SURRENDER_RECT                        → vị trí nút SURRENDER (pygame.Rect)
+  BTN_NEW_GAME_RECT                         → vị trí nút NEW GAME (pygame.Rect)
+  PIECE_DISPLAY_NAMES                       → dict map tên quân → chữ Hán
+    r_K→帥  r_A→仕  r_E→相  r_R→俥  r_N→傌  r_C→炮  r_P→兵
+    b_K→將  b_A→士  b_E→象  b_R→車  b_N→馬  b_C→砲  b_P→卒
+
+## Class BoardRenderer
+
+  __init__(screen)
+    → Khởi tạo 3 font:
+        piece_font: SimSun size 20 bold   (chữ Hán trên quân cờ)
+        game_font:  Times New Roman 36    (thông báo kết thúc game)
+        ui_font:    Arial 16 bold         (nút bấm, status bar)
+
+  [STATIC] grid_to_pixel(col, row) → (px, py)
+    → Chuyển tọa độ ô cờ → pixel Pygame
+    → Dùng START_X + col*SQUARE_SIZE, START_Y + row*SQUARE_SIZE
+
+  [STATIC] pixel_to_grid(px, py) → (col, row)
+    → Chuyển pixel chuột → tọa độ ô cờ (dùng cho mouse click ở DRY_RUN)
+    → Dùng round() để snap về ô gần nhất
+
+  draw_ui(game_state)
+    → Vẽ: nền BOARD_COLOR, lưới bàn cờ (10 hàng + 9 cột), cung tướng (X chéo)
+    → Vẽ: nút SURRENDER (đỏ), nút NEW GAME (xanh dương)
+    → Vẽ: mode indicator (MOUSE DRY RUN / CAMERA AI)
+    → Vẽ: hint "Bấm SPACE" khi đến lượt đỏ ở REAL RUN
+    → Vẽ: status bar (thông báo có nền mờ, hiển thị theo thời gian)
+    → Vẽ: AI thinking banner (hiện khi AI đang tính, có đếm giây)
+
+  draw_pieces(board)
+    → Vẽ tất cả quân cờ trên board 10x9
+    → Mỗi quân: vòng tròn trắng + viền màu + chữ Hán ở giữa
+    → Màu đỏ (220,20,60) cho quân r_, đen (0,0,0) cho quân b_
+
+  draw_highlight(last_move, selected_pos, invalid_flash_pos, invalid_flash_expiry)
+    → last_move (src, dst): viền xanh lá quanh 2 ô nước đi cuối
+    → selected_pos: viền xanh đậm quanh ô đang chọn (DRY_RUN)
+    → invalid_flash_pos: viền đỏ nhấp nháy khi nước đi không hợp lệ
+
+  draw_game_over(winner)
+    → Hiện thông báo lớn giữa màn hình:
+        "AI WINS (SAVED)"       màu xanh lá — khi winner == "b"
+        "YOU WIN (NOT SAVED)"   màu đỏ     — khi winner == "r"
+
+## Lưu Ý
+
+  - File không có logic game, không đọc/ghi dữ liệu
+  - BTN_SURRENDER_RECT và BTN_NEW_GAME_RECT được export để main_VIP.py
+    dùng collidepoint() kiểm tra click chuột
+  - Cung tướng vẽ bằng 4 đường chéo X (không fill vùng)
+
+================================================================================
+
+# TÀI LIỆU MODULE: VIP/camera_monitor.py
+# Cập nhật: 2026-03-05
+
+## Mô Tả Tổng Quát
+SINGLE CAMERA OWNER — module duy nhất được phép truy cập cv2.VideoCapture.
+Chạy background thread để đọc camera + YOLO liên tục, cung cấp frame và
+detections cho các module khác (SnapshotDetector). Không module nào khác
+được gọi cap.read() trực tiếp.
+
+## Cơ Chế Thread-Safe (2 Lock)
+
+  _lock      → bảo vệ _last_frame / _last_detections (cache shared data)
+  _cam_lock  → bảo vệ cap.read() / cap.grab() (tránh race condition giữa
+               background thread và get_fresh_snapshot())
+
+## Public API
+
+  start()
+    → Chạy background thread _capture_and_detect()
+    → Thread đọc camera + YOLO predict liên tục (~150ms mỗi vòng)
+    → Lưu frame + detections vào cache (_last_frame, _last_detections)
+
+  stop()
+    → Set stop_event → join thread (tối đa 5 giây)
+    → Release camera SAU KHI thread đã dừng hẳn (tránh race)
+    → Đóng cửa sổ OpenCV
+
+  reload_perspective()
+    → Reload perspective.npy sau khi calibrate lại camera
+    → Không cần restart CameraMonitor hay main loop
+    → Gọi bằng cam_monitor.reload_perspective() từ main_VIP.py
+
+  get_fresh_snapshot() → (frame, detections)
+    → [BLOCKING ~200-500ms] Flush 5 frame buffer + read mới + chạy YOLO
+    → Dùng khi cần ảnh CHÍNH XÁC tại thời điểm hiện tại (bấm SPACE, chụp T1)
+    → Cũng cập nhật cache sau khi chụp
+
+  update_display() → key
+    → Gọi mỗi frame trong game loop
+    → Lấy cache mới nhất → vẽ overlay → cv2.imshow()
+    → Trả về cv2.waitKey(1) (để bắt phím 'q' thoát camera window)
+
+  get_latest_frame_and_detections() → (frame, detections)
+    → [NON-BLOCKING] Lấy cache frame/detections từ background thread
+    → Không chụp mới, chỉ lấy kết quả detect gần nhất
+    → Dùng khi chỉ cần xem trạng thái hiện tại, không cần chính xác tuyệt đối
+
+## Sự Khác Biệt: get_fresh_snapshot vs get_latest_frame_and_detections
+
+  get_fresh_snapshot():
+    - Flush buffer + đọc frame MỚI từ camera ngay lúc đó
+    - Chạy YOLO predict đồng bộ (blocking)
+    - Chậm hơn nhưng chính xác hơn
+    - Dùng: bấm SPACE, chụp T1 baseline
+
+  get_latest_frame_and_detections():
+    - Lấy frame + detections từ cache của background thread
+    - Không blocking, trả về ngay lập tức
+    - Có thể lệch thời gian vài trăm ms
+    - Dùng: hiển thị, debug, kiểm tra nhanh
+
+## Internal Methods
+
+  _load_perspective()
+    → Load perspective.npy → lưu M (pixel→grid) và inv_M (grid→pixel)
+    → Gọi khi khởi tạo và khi reload_perspective()
+
+  _capture_and_detect()
+    → Body của background thread
+    → Vòng lặp: cam_lock → cap.read() → YOLO predict → cập nhật cache
+    → Dừng khi stop_event được set
+
+  _draw_overlay(frame, detections)
+    → Vẽ bounding box + confidence lên frame
+    → Vẽ lưới perspective (dùng inv_M để map grid → pixel)
+    → Vẽ info text "Detected: N pieces"
+
+================================================================================
+
+# TAI LIEU MODULE: VIP/robot_VIP.py
+# Cap nhat: 2026-03-05
+
+## Mo Ta Tong Quat
+File dieu khien canh tay robot FR5 rieng cho phien ban VIP. Tach ra tu
+robot.py goc de co the tuy chinh rieng biet ma khong anh huong code cu.
+
+main_VIP.py import FR5Robot tu robot_VIP.py (khong phai robot.py):
+  from robot_VIP import FR5Robot
+
+## Thay Doi So Voi robot.py Goc
+
+  [THAY DOI CHINH] Gripper: Tool DO1 (dau canh tay) -> Controller DO2 (bo dieu khien)
+    - Nguyen nhan: mat day noi den dau canh tay robot
+    - Giai phap: dung dau DO tren bo dieu khien thay the
+    - Config: self.gripper_do_id = 2
+    - API:    SetToolDO(id=1) -> SetDO(id=2)
+
+## Cau Truc Class FR5Robot
+
+  __init__()           -> gripper_do_id = 2 (Controller DO2)
+  connect()            -> Ket noi robot qua RPC SDK
+  board_to_pose()      -> (col, row) -> [x, y, z, rx, ry, rz] mm
+  movej_pose()         -> Di chuyen tu do: MoveCart()
+  movel_pose()         -> Di chuyen thang dung: MoveCart()
+  go_to_idle_home()    -> Ve vi tri IDLE (config.IDLE_X/Y/Z)
+  go_to_home_chess()   -> Ve diem day "HOMECHESS" tren bo dieu khien
+  gripper_ctrl(val)    -> SetDO(id=2, status=val) <- Controller DO2
+  pick_at(col, row)    -> Mo kep -> di den o -> ha xuong -> dong kep -> nhac len
+  place_at(col, row)   -> Di den o -> ha xuong -> mo kep -> nhac len
+  place_in_capture_bin() -> Tha quan bi an vao bai (config.CAPTURE_BIN_*)
+
+## Ham Chinh (goi tu main_VIP.py)
+
+  move_piece(s_col, s_row, d_col, d_row, is_capture)
+    1. [Neu an quan] pick_at(d_col, d_row) -> place_in_capture_bin()
+    2. pick_at(s_col, s_row)
+    3. place_at(d_col, d_row)
+    4. go_to_home_chess()
+
+================================================================================

@@ -31,6 +31,12 @@ import sound_player
 # IMPORT PIKAFISH (thay thế ai.py)
 from pikafish_engine import PikafishEngine
 
+# IMPORT FEN UTILITIES
+from fen_utils import board_array_to_fen, fen_to_board_array, INITIAL_FEN
+
+# IMPORT AI CONTROLLER
+from ai_controller import AIController
+
 # IMPORT BOOK
 try:
     import ai_book
@@ -41,7 +47,7 @@ except ImportError:
         print("❌ ERROR: Could not find book file (ai_book.py)")
         sys.exit()
 
-from robot import FR5Robot
+from robot_VIP import FR5Robot
 
 # ==========================================
 # 0. CẤU HÌNH CHẾ ĐỘ (CONFIG)
@@ -75,86 +81,7 @@ def _kill_zombie_processes():
 
 _kill_zombie_processes()
 
-# ==========================================
-# 1. FEN CONVERSION FUNCTIONS
-# ==========================================
-
-# Mapping: internal piece name → FEN character
-_PIECE_TO_FEN = {
-    'r_K': 'K', 'r_A': 'A', 'r_E': 'B', 'r_N': 'N',
-    'r_R': 'R', 'r_C': 'C', 'r_P': 'P',
-    'b_K': 'k', 'b_A': 'a', 'b_E': 'b', 'b_N': 'n',
-    'b_R': 'r', 'b_C': 'c', 'b_P': 'p',
-}
-
-# Reverse mapping: FEN character → internal piece name
-_FEN_TO_PIECE = {v: k for k, v in _PIECE_TO_FEN.items()}
-
-def board_array_to_fen(board, color='r', move_number=1):
-    """Convert 10x9 board array + active color → FEN string.
-    
-    Args:
-        board: 10x9 list-of-lists (our format)
-        color: 'r' for Red to move, 'b' for Black to move
-        move_number: full move counter
-    Returns:
-        FEN string, e.g. "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
-    """
-    rows = []
-    for r in range(10):
-        row_str = ''
-        empty = 0
-        for c in range(9):
-            p = board[r][c]
-            if p == '.':
-                empty += 1
-            else:
-                if empty:
-                    row_str += str(empty)
-                    empty = 0
-                fen_char = _PIECE_TO_FEN.get(p)
-                if fen_char is None:
-                    raise ValueError(f"Unknown piece: '{p}' at board[{r}][{c}]")
-                row_str += fen_char
-        if empty:
-            row_str += str(empty)
-        rows.append(row_str)
-
-    fen_color = 'w' if color == 'r' else 'b'
-    return f"{'/'.join(rows)} {fen_color} - - 0 {move_number}"
-
-def fen_to_board_array(fen):
-    """Convert FEN string → 10x9 board array + active color.
-    
-    Returns:
-        (board, color) where board is 10x9 list, color is 'r' or 'b'
-    """
-    parts = fen.split(' ')
-    ranks = parts[0].split('/')
-    color = 'r' if parts[1] == 'w' else 'b'
-    
-    board = []
-    for rank_str in ranks:
-        row = []
-        for ch in rank_str:
-            if ch.isdigit():
-                row.extend(['.'] * int(ch))
-            else:
-                piece = _FEN_TO_PIECE.get(ch)
-                if piece is None:
-                    raise ValueError(f"Unknown FEN character: '{ch}'")
-                row.append(piece)
-        if len(row) != 9:
-            raise ValueError(f"Invalid rank length: {len(row)} (expected 9)")
-        board.append(row)
-    
-    if len(board) != 10:
-        raise ValueError(f"Invalid number of ranks: {len(board)} (expected 10)")
-    
-    return board, color
-
-# FEN vị trí ban đầu chuẩn
-INITIAL_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
+# (FEN functions được tách ra file fen_utils.py)
 
 # ==========================================
 # 2. KHỞI TẠO PYGAME + RENDERER
@@ -199,6 +126,9 @@ ai_result        = None
 ai_thinking      = False
 ai_think_start   = 0.0
 
+# --- ROLLBACK STATE (lưu trước khi bấm SPACE) ---
+_pre_space_state = None   # dict chứa toàn bộ trạng thái game
+
 # --- ROBOT & CAMERA CONFIG ---
 robot = FR5Robot()
 
@@ -239,28 +169,26 @@ except Exception as e:
     src_pts_fake = np.array([[200, -100], [520, -100], [520, 260], [200, 260]], dtype=np.float32)
     robot.set_perspective_matrix(cv2.getPerspectiveTransform(dst_pts_logic, src_pts_fake))
 
-# --- KHỞI TẠO PIKAFISH ENGINE ---
+# --- KHỜI TẠO PIKAFISH ENGINE (bắt buộc) ---
 engine = None
-if not config.DRY_RUN or True:  # Pikafish hoạt động cả DRY_RUN
-    try:
-        _pikafish_exe = getattr(config, 'PIKAFISH_EXE', None)
-        _pikafish_nnue = getattr(config, 'PIKAFISH_NNUE', None)
-        
-        if _pikafish_exe and os.path.isfile(_pikafish_exe):
-            engine = PikafishEngine(_pikafish_exe)
-            engine.start(nnue_path=_pikafish_nnue)
-            print("✅ Pikafish engine started!")
-        else:
-            print(f"⚠️ Pikafish exe not found at: {_pikafish_exe}")
-            print("   → Fallback: sẽ dùng ai.py nếu có")
-            try:
-                import ai as ai_fallback
-                print("   → ai.py loaded as fallback")
-            except ImportError:
-                print("   ❌ Không có ai.py fallback. AI sẽ không hoạt động!")
-    except Exception as e:
-        print(f"⚠️ Pikafish init error: {e}")
-        engine = None
+try:
+    _pikafish_exe  = config.PIKAFISH_EXE
+    _pikafish_nnue = config.PIKAFISH_NNUE
+
+    if os.path.isfile(_pikafish_exe):
+        engine = PikafishEngine(_pikafish_exe)
+        engine.start(nnue_path=_pikafish_nnue)
+        print(f"✅ Pikafish engine started! (think={config.PIKAFISH_THINK_MS}ms)")
+    else:
+        print(f"❌ Pikafish exe KHÔNG tìm thấy: {_pikafish_exe}")
+        print("   ↳ Hãy tải Pikafish vào thư mục pikafish/ rồi chạy lại!")
+        print("   ↳ https://github.com/official-pikafish/Pikafish/releases")
+except Exception as e:
+    print(f"⚠️ Pikafish init error: {e}")
+    engine = None
+
+# Wrap engine trong AIController
+ai_ctrl = AIController(engine, config)
 
 # --- LOAD MODEL YOLO ---
 model = None
@@ -429,6 +357,38 @@ def handle_game_over(the_winner):
     else:
         print("\n[LEARN] 🗑️ AI Lost! NOT saving this data.")
 
+def handle_rollback():
+    """Rollback về trạng thái trước khi bấm SPACE lần cuối (phím Z)."""
+    global board, turn, last_move, current_fen, move_number
+    global r_captured, b_captured, move_history
+    global _pre_space_state
+
+    if _pre_space_state is None:
+        print("[ROLLBACK] ⚠️ Không có state để rollback!")
+        set_status("⚠️  Không có nước nào để rollback!", color=(180, 100, 0), duration=2.5)
+        return
+
+    print("[ROLLBACK] ↩️ Khôi phục trạng thái trước SPACE...")
+    s = _pre_space_state
+    board        = [row[:] for row in s["board"]]
+    turn         = s["turn"]
+    last_move    = s["last_move"]
+    current_fen  = s["current_fen"]
+    move_number  = s["move_number"]
+    r_captured   = list(s["r_captured"])
+    b_captured   = list(s["b_captured"])
+    move_history = list(s["move_history"])
+
+    # Khôi phục T1 baseline snapshot về trạng thái trước đó
+    if snapshot_detector is not None and s["baseline_occ"] is not None:
+        snapshot_detector._baseline_occ  = [row[:] for row in s["baseline_occ"]]
+        snapshot_detector._baseline_time = s["baseline_time"]
+        print("[ROLLBACK] 📸 T1 baseline restored.")
+
+    _pre_space_state = None   # Xóa sau khi rollback (chỉ rollback 1 lần)
+    set_status("↩️  Đã rollback! Di quân lại rồi bấm SPACE.", color=(180, 100, 0), duration=5.0)
+    print(f"[ROLLBACK] ✅ Done. FEN: {current_fen}")
+
 def process_human_move(src, dst, p_name):
     global board, last_move, turn, current_fen, move_number
     print(f"[HUMAN] ✅ Moved: {p_name} {src}->{dst}")
@@ -486,8 +446,23 @@ def handle_space_key():
         return
     
     print(f"[SPACE] 👀 Phát hiện: {piece} {src}->{dst}")
-    
+
     if xiangqi.is_valid_move(src, dst, board, "r"):
+        # Lưu state TRƯỚC KHI thực hiện nước đi (để rollback nếu cần)
+        global _pre_space_state
+        _pre_space_state = {
+            "board":        [row[:] for row in board],
+            "turn":         turn,
+            "last_move":    last_move,
+            "current_fen":  current_fen,
+            "move_number":  move_number,
+            "r_captured":   list(r_captured),
+            "b_captured":   list(b_captured),
+            "move_history": list(move_history),
+            "baseline_occ":  [row[:] for row in snapshot_detector._baseline_occ] if snapshot_detector and snapshot_detector._baseline_occ else None,
+            "baseline_time": snapshot_detector._baseline_time if snapshot_detector else None,
+        }
+        print("[SPACE] 💾 State saved for rollback (Z to undo).")
         process_human_move(src, dst, piece)
     else:
         print(f"[SPACE] ❌ Nước đi không hợp lệ: {src}->{dst}")
@@ -522,6 +497,10 @@ try:
                 # === SPACE KEY: Chụp snapshot và detect nước đi ===
                 if event.key == pygame.K_SPACE and not ALLOW_MOUSE_MOVE:
                     handle_space_key()
+
+                # === Z KEY: Rollback về trước khi bấm SPACE ===
+                elif event.key == pygame.K_z and not ALLOW_MOUSE_MOVE:
+                    handle_rollback()
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
@@ -573,22 +552,7 @@ try:
 
                 def _ai_worker():
                     global ai_result
-                    try:
-                        if engine is not None:
-                            # Pikafish: gửi FEN trực tiếp
-                            _think_ms = getattr(config, 'PIKAFISH_THINK_MS', 3000)
-                            ai_result = engine.pick_best_move(board_snapshot, "b", movetime_ms=_think_ms)
-                        else:
-                            # Fallback ai.py
-                            try:
-                                ai_result = ai_fallback.pick_best_move(board_snapshot, "b")
-                            except:
-                                print("[AI] ❌ No AI engine available!")
-                                ai_result = None
-                    except Exception as e:
-                        print(f"[AI Thread] Error: {e}")
-                        traceback.print_exc()
-                        ai_result = None
+                    ai_result = ai_ctrl.pick_move(board_snapshot, color="b")
 
                 ai_thread = threading.Thread(target=_ai_worker, daemon=True)
                 ai_thread.start()

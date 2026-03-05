@@ -38,10 +38,15 @@ VIDEO_SOURCE = 1
 AI_THINK_TIME = 10  # Time per move in seconds — AI gets 10s after subtracting TIME_BUFFER (0.5)
 AI_DEPTH = 30          # Độ sâu mặc định (sẽ bị ghi đè bởi logic tự động)
 
-# Giá trị quân cờ (Dùng cho hàm đánh giá)
-PIECE_VALUES = {
-    'K': 10000, 'R': 100, 'C': 50, 'N': 45, 'E': 20, 'A': 20, 'P': 9
-}
+# --- PIKAFISH ENGINE ---
+# Tải từ: https://github.com/official-pikafish/Pikafish/releases
+# Tải .nnue từ: https://pikafish.org
+# Đặt cả 2 file vào thư mục: <project_root>/pikafish/
+import os as _os
+_PIKAFISH_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'pikafish')
+PIKAFISH_EXE  = _os.path.join(_PIKAFISH_DIR, 'pikafish-avx2.exe')
+PIKAFISH_NNUE = _os.path.join(_PIKAFISH_DIR, 'pikafish.nnue')
+PIKAFISH_THINK_MS = 3000  # Thời gian suy nghĩ mỗi nước (milliseconds)
 
 # Tọa độ về nhà (Home) để né Camera
 IDLE_X = -72.027

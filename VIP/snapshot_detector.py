@@ -43,6 +43,7 @@ class SnapshotDetector:
 
         # T1 baseline
         self._baseline_occ = None    # occupancy grid: True/False
+        self._baseline_frame = None  # actual camera frame tại T1 (cho absdiff)
         self._baseline_time = None
 
     # -------------------------------------------------------------------------
@@ -65,6 +66,7 @@ class SnapshotDetector:
 
         occ = self._build_occupancy(detections)
         self._baseline_occ = occ
+        self._baseline_frame = frame.copy()  # Lưu frame thực để dùng absdiff
         self._baseline_time = time.time()
 
         # Debug: đếm quân detect được
@@ -100,7 +102,7 @@ class SnapshotDetector:
         print(f"[SNAPSHOT] 📸 T2 captured: {n_occupied} quân detected")
 
         # So sánh T1 vs T2 (dùng occupancy + memory board)
-        return self._compare_snapshots(self._baseline_occ, t2_occ, board)
+        return self._compare_snapshots(self._baseline_occ, t2_occ, board, frame)
 
     def has_baseline(self):
         """Kiểm tra đã có T1 baseline chưa."""
@@ -109,6 +111,7 @@ class SnapshotDetector:
     def clear_baseline(self):
         """Xóa T1 baseline (dùng khi reset game)."""
         self._baseline_occ = None
+        self._baseline_frame = None
         self._baseline_time = None
         print("[SNAPSHOT] 🗑️ Baseline cleared.")
 
@@ -157,24 +160,149 @@ class SnapshotDetector:
         return grid
 
     # -------------------------------------------------------------------------
+    # INTERNAL: Blind Capture Resolution (pixel differencing)
+    # -------------------------------------------------------------------------
+
+    def _get_pixel_box_from_grid(self, col, row, inv_M, frame_shape, padding=4):
+        """Map tọa độ ô cờ (col, row) về bounding box pixel trên camera gốc.
+
+        Dùng ma trận perspective nghịch đảo (grid→pixel) để map 4 góc của ô,
+        rồi lấy bounding rect bao quanh.
+
+        Args:
+            col, row:    tọa độ ô cờ (0-indexed)
+            inv_M:       ma trận nghịch đảo perspective (3x3, float32)
+            frame_shape: (height, width, ...) của frame camera
+            padding:     mở rộng bounding box thêm vài pixel mỗi phía
+
+        Returns:
+            (x1, y1, x2, y2) clipped vào kích thước frame, hoặc None nếu lỗi
+        """
+        try:
+            h, w = frame_shape[:2]
+            # 4 góc của ô cờ trong toạ độ grid
+            corners_grid = np.array([[
+                [float(col),     float(row)    ],
+                [float(col + 1), float(row)    ],
+                [float(col + 1), float(row + 1)],
+                [float(col),     float(row + 1)],
+            ]], dtype=np.float32)
+
+            # Map về tọa độ pixel
+            corners_px = cv2.perspectiveTransform(corners_grid, inv_M)[0]
+
+            xs = corners_px[:, 0]
+            ys = corners_px[:, 1]
+            x1 = int(np.clip(np.min(xs) - padding, 0, w - 1))
+            y1 = int(np.clip(np.min(ys) - padding, 0, h - 1))
+            x2 = int(np.clip(np.max(xs) + padding, 0, w - 1))
+            y2 = int(np.clip(np.max(ys) + padding, 0, h - 1))
+
+            if x2 <= x1 or y2 <= y1:
+                return None  # Ô quá nhỏ hoặc nằm ngoài frame
+
+            return x1, y1, x2, y2
+        except Exception as e:
+            print(f"[SNAPSHOT] ⚠️ _get_pixel_box_from_grid error: {e}")
+            return None
+
+    def _resolve_capture_ambiguity(self, candidates, curr_frame):
+        """Dùng pixel differencing (absdiff) để xác định ô đích thực sự.
+
+        Khi YOLO không thể phân biệt ô nào bị ăn (vì occupancy-only),
+        so sánh từng ô candidate giữa T1 (baseline_frame) và T2 (curr_frame).
+        Ô bị ăn sẽ có sự thay đổi pixel lớn nhất (quân đen → quân đỏ).
+
+        Args:
+            candidates: list of (col, row) — các ô đích tiềm năng từ FEN
+            curr_frame: OpenCV frame (BGR) tại thời điểm T2
+
+        Returns:
+            (col, row) của ô đích thực sự, hoặc None nếu không xác định được
+        """
+        if self._baseline_frame is None:
+            print("[SNAPSHOT] ⚠️ resolve_capture_ambiguity: không có baseline_frame!")
+            return None
+        if curr_frame is None or len(candidates) == 0:
+            return None
+
+        # Load perspective matrix để tính inverse
+        if not os.path.exists(self.perspective_path):
+            print("[SNAPSHOT] ⚠️ resolve_capture_ambiguity: không có perspective.npy!")
+            return None
+
+        try:
+            M = np.load(self.perspective_path)
+            inv_M = np.linalg.inv(M)
+        except Exception as e:
+            print(f"[SNAPSHOT] ⚠️ resolve_capture_ambiguity: lỗi load/invert M: {e}")
+            return None
+
+        best_candidate = None
+        best_score = -1
+        score_log = []
+
+        for (col, row) in candidates:
+            box = self._get_pixel_box_from_grid(col, row, inv_M, curr_frame.shape)
+            if box is None:
+                score_log.append(f"  ({col},{row}): box=None")
+                continue
+
+            x1, y1, x2, y2 = box
+
+            prev_crop = self._baseline_frame[y1:y2, x1:x2]
+            curr_crop = curr_frame[y1:y2, x1:x2]
+
+            if prev_crop.size == 0 or curr_crop.size == 0:
+                score_log.append(f"  ({col},{row}): empty crop")
+                continue
+
+            # Grayscale để loại trừ nhiễu ánh sáng màu
+            prev_gray = cv2.cvtColor(prev_crop, cv2.COLOR_BGR2GRAY)
+            curr_gray = cv2.cvtColor(curr_crop, cv2.COLOR_BGR2GRAY)
+
+            diff = cv2.absdiff(prev_gray, curr_gray)
+            score = int(np.sum(diff))
+
+            score_log.append(f"  ({col},{row}): score={score}")
+
+            if score > best_score:
+                best_score = score
+                best_candidate = (col, row)
+
+        print("[SNAPSHOT] 🔬 Blind Capture Resolution scores:")
+        for s in score_log:
+            print(s)
+        print(f"[SNAPSHOT] ✅ Best candidate: {best_candidate} (score={best_score})")
+
+        return best_candidate
+
+    # -------------------------------------------------------------------------
     # INTERNAL: So sánh 2 snapshot T1 vs T2
     # -------------------------------------------------------------------------
 
-    def _compare_snapshots(self, t1_occ, t2_occ, board):
+    def _compare_snapshots(self, t1_occ, t2_occ, board, frame=None):
         """So sánh T1 vs T2 occupancy, dùng memory board để xác định quân.
         
-        Logic:
-          - disappeared: T1 có quân nhưng T2 trống → check board: nếu đỏ → src
-          - appeared:    T1 trống nhưng T2 có quân → dst
+        Dùng VALIDATE-FIRST approach: tìm tất cả cặp (src, dst) khả dĩ
+        rồi validate bằng luật cờ. DST candidates chỉ dựa vào thay đổi
+        THỰC SỰ từ camera (không quét toàn bộ quân đen để tránh false positives).
         
         Args:
             t1_occ: 10x9 bool grid (T1 occupancy)
             t2_occ: 10x9 bool grid (T2 occupancy)
             board:  10x9 memory board (tại thời điểm T1)
+            frame:  OpenCV frame BGR tại T2 (dùng cho pixel absdiff fallback)
         
         Returns:
             (src, dst, piece_name) hoặc (None, None, None)
         """
+        # Import xiangqi để validate
+        try:
+            import xiangqi
+        except ImportError:
+            xiangqi = None
+
         disappeared = []  # Ô T1 có quân → T2 trống
         appeared = []     # Ô T1 trống → T2 có quân
 
@@ -184,11 +312,9 @@ class SnapshotDetector:
                 t2_has = t2_occ[r][c]
 
                 if t1_has and not t2_has:
-                    # Quân biến mất
                     piece = board[r][c]
                     disappeared.append((c, r, piece))
                 elif not t1_has and t2_has:
-                    # Quân xuất hiện
                     appeared.append((c, r))
 
         # Debug log
@@ -198,69 +324,93 @@ class SnapshotDetector:
         if appeared:
             print(f"  Xuất hiện: {[(c, r) for c, r in appeared]}")
 
-        # Lọc: chỉ quan tâm quân ĐỎ biến mất (người chơi đỏ di quân)
+        # === SRC candidates: quân ĐỎ biến mất ===
         red_disappeared = [(c, r, p) for c, r, p in disappeared if p.startswith("r")]
-        
-        if red_disappeared:
-            print(f"  Quân đỏ biến mất: {red_disappeared}")
+        if not red_disappeared:
+            print("[SNAPSHOT] ❌ Không có quân đỏ nào biến mất.")
+            return None, None, None
 
-        # --- Pattern 1: Di chuyển thường (1 đỏ mất, 1 xuất hiện) ---
-        if len(red_disappeared) == 1 and len(appeared) == 1:
-            src = (red_disappeared[0][0], red_disappeared[0][1])
-            dst = (appeared[0][0], appeared[0][1])
-            piece = red_disappeared[0][2]
-            print(f"[SNAPSHOT] ✅ Pattern 1 (di chuyển): {piece} {src}→{dst}")
+        print(f"  Quân đỏ biến mất: {red_disappeared}")
+
+        # === DST candidates: chỉ dựa vào thay đổi THỰC SỰ từ camera ===
+        # Loại 1: Ô T1 trống → T2 có quân (di chuyển thường)
+        dst_candidates_move = set((c, r) for c, r in appeared)
+
+        # Loại 2: Ô quân ĐEN THỰC SỰ biến mất ở T2 (bị ăn, YOLO miss quân đỏ)
+        dst_candidates_black_gone = set()
+        for c, r, p in disappeared:
+            if p.startswith("b"):
+                dst_candidates_black_gone.add((c, r))
+
+        # Gộp dst candidates — KHÔNG quét toàn bộ quân đen trên board
+        all_dst = dst_candidates_move | dst_candidates_black_gone
+
+        if all_dst:
+            print(f"  DST candidates: move={dst_candidates_move}, black_gone={dst_candidates_black_gone}")
+
+        # === VALIDATE: thử từng cặp (src, dst) với luật cờ ===
+        valid_moves = []
+        for src_c, src_r, piece in red_disappeared:
+            src = (src_c, src_r)
+            for dst in all_dst:
+                if dst == src:
+                    continue
+                if xiangqi and xiangqi.is_valid_move(src, dst, board, "r"):
+                    dst_piece = board[dst[1]][dst[0]]
+                    move_type = "ăn quân" if dst_piece.startswith("b") else "di chuyển"
+                    valid_moves.append((src, dst, piece, move_type))
+                    print(f"  ✅ Valid: {piece} {src}→{dst} ({move_type})")
+
+        if len(valid_moves) == 1:
+            src, dst, piece, move_type = valid_moves[0]
+            print(f"[SNAPSHOT] ✅ Detected ({move_type}): {piece} {src}→{dst}")
             return src, dst, piece
 
-        # --- Pattern 2: Ăn quân (1 đỏ mất, 0 xuất hiện mới) ---
-        # Quân đỏ di chuyển đến ô có quân đen → T2 vẫn occupied ở dst
-        # → appeared = 0 vì ô đó vẫn có quân (đỏ thay đen)
-        if len(red_disappeared) == 1 and len(appeared) == 0:
+        if len(valid_moves) > 1:
+            # Khi còn nhiều ứng viên, dùng pixel absdiff để chọn đúng ô đích
+            # (theo thiết kế gốc trong discussion_notes.txt — chính xác hơn Manhattan)
+            print(f"[SNAPSHOT] ⚠️ Ambiguous: {len(valid_moves)} valid moves — dùng pixel absdiff tiebreaker...")
+            dst_candidates = [(dst[0], dst[1]) for src, dst, piece, move_type in valid_moves]
+            best_dst = self._resolve_capture_ambiguity(dst_candidates, frame) if frame is not None else None
+            if best_dst is not None:
+                matched = [(s, d, p, mt) for s, d, p, mt in valid_moves if d == best_dst]
+                if matched:
+                    src, dst, piece, move_type = matched[0]
+                    print(f"[SNAPSHOT] ✅ Detected ({move_type}, pixel absdiff of {len(valid_moves)}): {piece} {src}→{dst}")
+                    return src, dst, piece
+            # Fallback về Manhattan nếu pixel absdiff thất bại
+            best = min(valid_moves, key=lambda m: abs(m[0][0]-m[1][0]) + abs(m[0][1]-m[1][1]))
+            src, dst, piece, move_type = best
+            print(f"[SNAPSHOT] ✅ Detected ({move_type}, Manhattan fallback of {len(valid_moves)}): {piece} {src}→{dst}")
+            return src, dst, piece
+
+        # === FALLBACK: Không có valid move qua occupancy grid ===
+        # Dùng pixel absdiff để phát hiện capture (khi YOLO miss hoàn toàn dst)
+        if len(red_disappeared) == 1 and frame is not None:
             src_c, src_r, piece = red_disappeared[0]
-            # Tìm ô mà T1 có quân ĐEN nhưng T2 vẫn có quân
-            # (quân đỏ đã thế chỗ quân đen)
-            # Cách khác: tìm ô biến mất quân đen
-            black_disappeared = [(c, r, p) for c, r, p in disappeared if p.startswith("b")]
+            src = (src_c, src_r)
+
+            # Trường hợp: cả đỏ src VÀ đen dst đều "biến mất" (YOLO miss cả 2)
+            black_disappeared = [(c, r) for c, r, p in disappeared if p.startswith("b")]
             if len(black_disappeared) == 1:
-                # Quân đen cũng biến mất → nhưng thực ra đỏ đã ăn đen
-                # Nhưng camera nên thấy quân đỏ ở vị trí đen cũ... 
-                # Trường hợp: cả đỏ src và đen dst đều "biến mất" → YOLO miss
-                dst = (black_disappeared[0][0], black_disappeared[0][1])
-                print(f"[SNAPSHOT] ✅ Pattern 2a (ăn quân, cả 2 biến mất): {piece} ({src_c},{src_r})→{dst}")
-                return (src_c, src_r), dst, piece
-            
-            # Nếu không có đen biến mất → tìm ô đen mà quân vẫn còn
-            # (quân đỏ thay thế quân đen, camera vẫn thấy occupied)
-            candidates = []
-            for r in range(self.num_rows):
-                for c in range(self.num_cols):
-                    mem_piece = board[r][c]
-                    if mem_piece.startswith("b") and t2_occ[r][c]:
-                        # Ô này: memory = đen, T2 vẫn có quân → có thể đỏ đã ăn đen ở đây
-                        candidates.append((c, r))
-            
-            if len(candidates) > 0:
-                # Chọn candidate gần src nhất
-                best = min(candidates, key=lambda p: abs(p[0]-src_c) + abs(p[1]-src_r))
-                print(f"[SNAPSHOT] ✅ Pattern 2b (ăn quân, dst vẫn occupied): {piece} ({src_c},{src_r})→{best}")
-                return (src_c, src_r), best, piece
+                dst = black_disappeared[0]
+                if xiangqi and xiangqi.is_valid_move(src, dst, board, "r"):
+                    print(f"[SNAPSHOT] ✅ Fallback (ăn quân, cả 2 biến mất): {piece} {src}→{dst}")
+                    return src, dst, piece
 
-        # --- Pattern 3: Nhiều thay đổi → chọn cặp đỏ gần nhất ---
-        if len(red_disappeared) >= 1 and len(appeared) >= 1:
-            best_pair = None
-            best_dist = 999
-            for mc, mr, mp in red_disappeared:
-                for nc, nr in appeared:
-                    dist = abs(mc - nc) + abs(mr - nr)
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_pair = ((mc, mr, mp), (nc, nr))
-            if best_pair and best_dist <= 10:
-                src = (best_pair[0][0], best_pair[0][1])
-                dst = (best_pair[1][0], best_pair[1][1])
-                piece = best_pair[0][2]
-                print(f"[SNAPSHOT] ✅ Pattern 3 (multi, dist={best_dist}): {piece} {src}→{dst}")
-                return src, dst, piece
+            # Dùng pixel absdiff để tìm ô quân đen có thay đổi nhiều nhất
+            black_candidates = [
+                (c, r)
+                for r in range(self.num_rows)
+                for c in range(self.num_cols)
+                if board[r][c].startswith("b")
+                and (xiangqi and xiangqi.is_valid_move(src, (c, r), board, "r"))
+            ]
+            if black_candidates:
+                best = self._resolve_capture_ambiguity(black_candidates, frame)
+                if best is not None:
+                    print(f"[SNAPSHOT] ✅ Fallback (pixel absdiff capture): {piece} {src}→{best}")
+                    return src, best, piece
 
-        print("[SNAPSHOT] ❌ Không phát hiện được nước đi.")
+        print("[SNAPSHOT] ❌ Không tìm được nước đi hợp lệ.")
         return None, None, None
