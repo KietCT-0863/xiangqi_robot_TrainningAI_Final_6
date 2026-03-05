@@ -72,13 +72,20 @@ class CameraMonitor:
             with self._cam_lock:
                 if self._stop_event.is_set():
                     break
+                
+                # FLUSH BUFFER: Xóa sạch các frame cũ bị stack (dồn ứ) 
+                # trong thời gian CPU đang bận chạy YOLO ở vòng lặp trước.
+                # Đây là lý do chính gây ra hiện tượng "khựng/delay" (hình đi chậm hơn thực tế).
+                for _ in range(5):
+                    self.cap.grab()
+                    
                 ret, frame = self.cap.read()
 
             if not ret:
                 time.sleep(0.01)
                 continue
 
-            # Chạy YOLO (giảm tải: predict mỗi ~200ms)
+            # Chạy YOLO
             detections = []
             if self.model is not None:
                 try:
@@ -99,8 +106,9 @@ class CameraMonitor:
                 self._last_frame = frame.copy()
                 self._last_detections = detections
 
-            # Sleep nhỏ, kiểm tra stop_event mỗi 50ms để thoát nhanh
-            self._stop_event.wait(timeout=0.15)
+            # Bản thân model YOLO đã mất ~100-200ms để chạy xong,
+            # nên vòng lặp này đã có delay tự nhiên, không cần sleep 0.15s nữa.
+            self._stop_event.wait(timeout=0.02)
 
         print("[CAM MONITOR] 🛑 Background thread exited cleanly.")
 

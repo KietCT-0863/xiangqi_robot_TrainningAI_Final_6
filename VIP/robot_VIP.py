@@ -198,6 +198,11 @@ class FR5Robot:
             time.sleep(0.3)
             return 0
 
+        # NẾU CẮM CÁP M12 8-PIN VÀO ĐẦU CÁNH TAY (Tool DO):
+        # 1. Hãy dò tìm ID bằng file test_tool_do2.py trước (Thử ID=0, rồi ID=1)
+        # 2. Sau khi biết ID thực (VD: 1), sửa self.gripper_do_id = 1 ở đầu file.
+        # 3. Đổi hàm SetDO (dưới đây) thành SetToolDO:
+        # err = self.robot.SetToolDO(id=self.gripper_do_id, status=val, block=1)
         err = self.robot.SetDO(
             id=self.gripper_do_id,
             status=val,
