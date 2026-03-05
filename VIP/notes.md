@@ -138,6 +138,18 @@ THAY ĐỔI SO VỚI robot.py GỐC:
   self.gripper_do_id = 2
   SetToolDO(id=1) → SetDO(id=2)
 
+📍 HƯỚNG DẪN TÌM PORT TRÊN ĐẦU CÁNH TAY (Cáp M12 8-pin):
+  Cổng Tool Flange của Fairino FR3 mặc định chỉ hỗ trợ DO0 và DO1 (Số 0 và Số 1). Việc test cũ dùng `ID=2` có thể do nhầm lẫn hoặc firmware riêng.
+  **Để tìm đúng chân kẹp trên cáp M12 8-pin, BẮT BUỘC TEST BẰNG FILE `test_tool_do2.py`:**
+  1. Vào file `test_tool_do2.py`, sửa `TOOL_DO_ID = 0` rồi chạy thử. Kẹp giật/tắt => Chân M12 đó là **DO0**.
+  2. Nếu không chạy, đổi `TOOL_DO_ID = 1` rồi chạy lại. Nếu OK => Chân đó là **DO1**.
+  3. Nếu bước 2 vẫn thất bại, đổi `TOOL_DO_ID = 2` (File cũ) rồi chạy lại.
+
+  **Sau khi test ra con số hoạt động (Giả sử là ID=1):**
+  Vào file `robot_VIP.py` sửa lại đúng 2 chỗ:
+  1. Khai báo ban đầu (Dòng 37): `self.gripper_do_id = 1`
+  2. Hàm `gripper_ctrl` (Dòng 201): `err = self.robot.SetToolDO(id=self.gripper_do_id, status=val, block=1)`
+
 CÁC HÀM:
   connect()              → Kết nối robot qua RPC SDK
   board_to_pose()        → (col, row) → [x, y, z, rx, ry, rz] mm
@@ -227,56 +239,63 @@ PIXEL ABSDIFF (_resolve_capture_ambiguity):
 
 ---
 
-### B7. VIP/board_renderer.py  ← render mỗi frame
+### B7. VIP/game_state.py  ← Quản lý Dữ liệu
 
-Render giao diện bàn cờ Pygame. Không chứa logic game.
+Chứa class `GameState`. Quản lý toàn bộ vòng đời data, xóa bỏ biến Global.
+* Lưu giữ: `board`, `turn`, `current_fen`, `move_history`, `game_over`
+* Method chính: `update_fen_from_board()`, `reset_game()`, `handle_rollback()`, `process_human_move()`, `handle_game_over()`.
+
+---
+
+### B8. VIP/hardware_manager.py  ← Bật AI, Camera, Robot
+
+Chứa class `HardwareManager`. Điểm chạm kết nối thiết bị vật lý và trí tuệ nhân tạo.
+* Gói gọn: `FR5Robot`, `PikafishEngine` (qua `AIController`), `CameraMonitor`, `YoloSnapshotDetector`.
+* Method chính: `initialize_all()` (kết nối r, m, c theo thứ tự an toàn), `cleanup()`, `capture_baseline_if_needed()`.
+
+---
+
+### B9. VIP/input_handler.py  ← Lắng nghe Phím/Chuột
+
+Chứa class `InputHandler`. Điều hướng thao tác người dùng Pygame vào `GameState` và `HardwareManager`.
+* `handle_mouse_down()`: Kiểm tra vùng click Surrender, New Game, Kéo thả chuột (Override).
+* `handle_keyboard(key)`: Phím SPACE (gọi YOLO detect_move), Phím Z (gọi Rollback).
+
+---
+
+### B10. VIP/board_renderer.py  ← Vẽ màn hình mỗi frame
+
+Render giao diện bàn cờ Pygame. Không chứa logic game, chỉ nhận state từ `GameState`.
 
 HẰNG SỐ: SCREEN_WIDTH=800, SCREEN_HEIGHT=600, SQUARE_SIZE=40
-          BTN_SURRENDER_RECT, BTN_NEW_GAME_RECT (dùng collidepoint() ở main)
+          BTN_SURRENDER_RECT, BTN_NEW_GAME_RECT
 
 METHODS:
-  draw_ui(game_state)     → nền, lưới, cung tướng, nút, status bar, AI banner
+  draw_ui(game_state_dict)     → nền, lưới, cung tướng, nút, status bar, AI banner
   draw_pieces(board)      → vòng tròn + viền + chữ Hán
   draw_highlight(...)     → last_move (xanh lá), selected (xanh), invalid (đỏ nhấp)
   draw_game_over(winner)  → thông báo lớn giữa màn hình
 
-PIECE NAMES: r_K→帥  r_C→炮  r_P→兵  b_K→將  b_C→砲  b_P→卒  ...
-
 ---
 
-### B8. VIP/main_VIP.py  ← điểm vào chính
+### B11. VIP/main_VIP.py  ← Điểm vào chính
 
-Vòng lặp game chính, khởi tạo toàn bộ hệ thống.
-
-IMPORT ORDER (thứ tự phụ thuộc):
-  1. fen_utils        → board_array_to_fen, fen_to_board_array, INITIAL_FEN
-  2. ai_controller    → AIController
-  3. robot_VIP        → FR5Robot
-  4. pikafish_engine  → PikafishEngine
-  5. camera_monitor   → CameraMonitor  (import sau khi có cap + model)
-  6. snapshot_detector → SnapshotDetector
-  7. board_renderer   → BoardRenderer, BTN_*, SCREEN_*
+Vòng lặp game chính (Game Loop). Rất gọn nhẹ nhờ kiến trúc SRP.
 
 KHỞI TẠO THEO THỨ TỰ:
-  _kill_zombie_processes() → Pygame → game state
-  → Robot connect [try 1] → go_to_home_chess [try 2, lỗi không ảnh hưởng connected]
-  → Pikafish start → ai_ctrl = AIController(engine, config)
-  → YOLO load → Camera open → Camera calibrate (V)
-  → CameraMonitor.start() → SnapshotDetector init → T1 baseline
+  _kill_zombie_processes() → Pygame 
+  → hw = HardwareManager(...).initialize_all()
+  → state = GameState(...)
+  → input_mgr = InputHandler(state, hw)
 
-FIX (2026-03-05): Tách 2 khối try để lỗi home (MoveCart 101) không làm
-  robot.connected=False. Robot vẫn execute move_piece() bình thường.
-
-CHỨC NĂNG GAME:
-  reset_game()         → Board mới, FEN mới, chụp T1 mới
-  handle_space_key()   → Lưu rollback state → detect_move() → process_human_move()
-  handle_rollback()    → Khôi phục state + T1 baseline (phím Z)
-  process_human_move() → Cập nhật board, FEN, lịch sử
-  _ai_worker()         → ai_ctrl.pick_move() trong thread daemon
-  Loop detection       → Nếu AI lặp nước → random.choice(valid_moves)
+CHỨC NĂNG LOOP (30 FPS):
+  1. Gọi `renderer` vẽ frame.
+  2. Truyền event Pygame vào `input_mgr`.
+  3. Cập nhật Camera View.
+  4. Nếu lượt AI (`turn == b`), nháy Thread chờ Engine đánh, đánh xong gọi `robot.move_piece()`.
 
 DRY_RUN mode (config.DRY_RUN=True):
-  → Không cần camera/robot → Mouse click để di quân
+  → Trình quản lý phần cứng tự động Mock Robot/Camera → Vào thẳng chế độ chuột (Mouse Drag).
 
 ---
 
