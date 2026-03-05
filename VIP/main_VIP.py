@@ -57,6 +57,12 @@ ALLOW_MOUSE_MOVE = config.DRY_RUN
 _mode_label = '🛠️ DRY RUN (MOUSE & LOG)' if config.DRY_RUN else '🤖 REAL RUN (CAMERA & ROBOT)'
 print(f"\n=== MODE: {_mode_label} ===")
 
+PIECE_VIETNAMESE_NAMES = {
+    "r_K": "Tướng Đỏ", "r_A": "Sĩ Đỏ", "r_E": "Tượng Đỏ", "r_N": "Mã Đỏ", "r_R": "Xe Đỏ", "r_C": "Pháo Đỏ", "r_P": "Tốt Đỏ",
+    "b_K": "Tướng Đen", "b_A": "Sĩ Đen", "b_E": "Tượng Đen", "b_N": "Mã Đen", "b_R": "Xe Đen", "b_C": "Pháo Đen", "b_P": "Tốt Đen",
+    ".": "Ô Trống"
+}
+
 # ==========================================
 # 0.5. KILL ZOMBIE PROCESSES TỪ LẦN CHẠY TRƯỚC
 # ==========================================
@@ -128,6 +134,7 @@ ai_think_start   = 0.0
 
 # --- ROLLBACK STATE (lưu trước khi bấm SPACE) ---
 _pre_space_state = None   # dict chứa toàn bộ trạng thái game
+manual_override_active = False
 
 # --- ROBOT & CAMERA CONFIG ---
 robot = FR5Robot()
@@ -293,11 +300,13 @@ if not config.DRY_RUN and cap is not None and model is not None:
     cam_monitor.start()
 
 # --- KHỞI TẠO SNAPSHOT DETECTOR (T1/T2) ---
-from snapshot_detector import SnapshotDetector
-snapshot_detector = None
-if not config.DRY_RUN and cap is not None and model is not None:
-    snapshot_detector = SnapshotDetector(PERSPECTIVE_PATH, CLASS_ID_TO_INTERNAL_NAME)
-    print("[INIT] ✅ SnapshotDetector initialized (no direct camera access).")
+from snapshot_detector import SnapshotDetector as YoloSnapshotDetector
+
+yolo_detector = None
+if not config.DRY_RUN and cap is not None:
+    if model is not None:
+        yolo_detector = YoloSnapshotDetector(PERSPECTIVE_PATH, CLASS_ID_TO_INTERNAL_NAME)
+        print("[INIT] ✅ YoloSnapshotDetector initialized.")
 
 # ==========================================
 # 4. HÀM HỖ TRỢ
@@ -353,14 +362,19 @@ def reset_game():
     ai_result = None
     ai_thinking = False
     ai_think_start = 0.0
+    
+    global manual_override_active
+    manual_override_active = False
+
     print("[GAME] 🔄 New game started!")
     print(f"[FEN] {current_fen}")
     
     # Chụp T1 baseline cho game mới
-    if snapshot_detector is not None and cam_monitor is not None:
+    if cam_monitor is not None:
         time.sleep(1)  # Đợi bàn cờ ổn định
         frame, detections = cam_monitor.get_fresh_snapshot()
-        snapshot_detector.capture_baseline(frame, detections)
+        if yolo_detector:
+            yolo_detector.capture_baseline(frame, detections)
 
 def set_status(msg, color=(200, 0, 0), duration=2.5):
     global status_message, status_color, status_expiry
@@ -405,14 +419,18 @@ def handle_rollback():
     move_history = list(s["move_history"])
 
     # Khôi phục T1 baseline snapshot về trạng thái trước đó
-    if snapshot_detector is not None and s["baseline_occ"] is not None:
-        snapshot_detector._baseline_occ  = [row[:] for row in s["baseline_occ"]]
-        snapshot_detector._baseline_time = s["baseline_time"]
-        print("[ROLLBACK] 📸 T1 baseline restored.")
+    if yolo_detector is not None and s.get("baseline_occ") is not None and hasattr(yolo_detector, "_baseline_occ"):
+        yolo_detector._baseline_occ  = [row[:] for row in s["baseline_occ"]]
+        yolo_detector._baseline_time = s.get("baseline_time")
+
+    print("[ROLLBACK] 📸 T1 baselines restored.")
 
     _pre_space_state = None   # Xóa sau khi rollback (chỉ rollback 1 lần)
     set_status("↩️  Đã rollback! Di quân lại rồi bấm SPACE.", color=(180, 100, 0), duration=5.0)
     print(f"[ROLLBACK] ✅ Done. FEN: {current_fen}")
+    
+    global manual_override_active
+    manual_override_active = False
 
 def process_human_move(src, dst, p_name):
     global board, last_move, turn, current_fen, move_number
@@ -443,38 +461,70 @@ def handle_space_key():
     if turn != "r" or game_over:
         return
     
-    print("\n[SPACE] 🎯 Người chơi bấm SPACE — đang chụp T2 snapshot...")
-    set_status("📸  Đang chụp và phân tích...", color=(0, 100, 180), duration=3.0)
+    global manual_override_active
     
-    # Kiểm tra đã có T1 baseline chưa
-    if snapshot_detector is None or cam_monitor is None:
-        set_status("❌  Snapshot detector chưa khởi tạo!", color=(180, 0, 0))
+    print("\n[SPACE] 🎯 Người chơi bấm SPACE — đang chụp T2 snapshot...")
+    set_status("📸  Đang phân tích kép (Yolo + Pixel)...", color=(0, 100, 180), duration=3.0)
+    
+    # Kiểm tra đã có bộ nhận diện chưa
+    if (yolo_detector is None and pixel_detector is None) or cam_monitor is None:
+        set_status("❌  Hệ thống nhận diện chưa khởi tạo!", color=(180, 0, 0))
         return
     
-    # Lấy snapshot mới từ CameraMonitor (không cần pause/resume)
+    # Lấy snapshot mới từ CameraMonitor
     frame, detections = cam_monitor.get_fresh_snapshot()
     
-    if not snapshot_detector.has_baseline():
+    # Kịp thời chụp baseline lần đầu
+    has_baseline = False
+    if yolo_detector and yolo_detector.has_baseline():
+        has_baseline = True
+        
+    if not has_baseline:
         print("[SPACE] ⚠️ Chưa có T1 baseline — chụp ngay...")
-        if snapshot_detector.capture_baseline(frame, detections):
+        success = False
+        if yolo_detector and yolo_detector.capture_baseline(frame, detections): success = True
+        if success:
             set_status("📸 Đã chụp T1 baseline. Đi quân rồi bấm SPACE lại!", color=(0, 100, 180), duration=5.0)
         else:
             set_status("❌ Không chụp được baseline!", color=(180, 0, 0))
         return
     
-    # Chụp T2 và so sánh với T1
-    src, dst, piece = snapshot_detector.detect_move(frame, detections, board)
+    # Chụp T2 và phân tích
+    src, dst, piece = None, None, None
     
-    if src is None or dst is None:
-        set_status("❌  Không phát hiện nước đi! Bấm SPACE lại.", color=(180, 0, 0))
-        print("[SPACE] ❌ No valid move detected from T1/T2 comparison")
+    if yolo_detector:
+        print("[SPACE] 🔍 Chạy YOLO Detector...")
+        src, dst, piece = yolo_detector.detect_move(frame, detections, board)
+        if src:
+            p_vi = PIECE_VIETNAMESE_NAMES.get(piece, piece)
+            print(f"[YOLO] 👉 Nhận diện: {p_vi} ({piece}) đi từ Cột {src[0]} Hàng {src[1]} đến Cột {dst[0]} Hàng {dst[1]}")
+    
+    # Logic xác nhận
+    if src is None:
+        print("[SPACE] ❌ YOLO KHÔNG thấy nước đi hợp lệ!")
+        set_status("❌  Không thấy nước đi! Di quân trên màn hình.", color=(180, 0, 0), duration=5.0)
+        manual_override_active = True
+        
+        # Xóa T1 cũ để lần nhấn SPACE tiếp theo buộc phải chụp lại
+        if yolo_detector: yolo_detector._baseline_occ = None
         return
-    
-    print(f"[SPACE] 👀 Phát hiện: {piece} {src}->{dst}")
+    elif not xiangqi.is_valid_move(src, dst, board, "r"):
+        print(f"[SPACE] ❌ YOLO báo nước đi không hợp lệ: {src}->{dst}")
+        set_status("⚠️  Lỗi nhận diện / Đi sai luật! Dùng chuột kéo thả.", color=(180, 100, 0), duration=60.0)
+        set_invalid_flash(dst[0], dst[1])
+        manual_override_active = True
+        
+        # Xóa T1 cũ để chụp lại
+        if yolo_detector: yolo_detector._baseline_occ = None
+        return
 
     if xiangqi.is_valid_move(src, dst, board, "r"):
         # Lưu state TRƯỚC KHI thực hiện nước đi (để rollback nếu cần)
         global _pre_space_state
+        
+        occ = [row[:] for row in yolo_detector._baseline_occ] if yolo_detector and hasattr(yolo_detector, "_baseline_occ") else None
+        b_time = yolo_detector._baseline_time if yolo_detector else None
+        
         _pre_space_state = {
             "board":        [row[:] for row in board],
             "turn":         turn,
@@ -484,8 +534,8 @@ def handle_space_key():
             "r_captured":   list(r_captured),
             "b_captured":   list(b_captured),
             "move_history": list(move_history),
-            "baseline_occ":  [row[:] for row in snapshot_detector._baseline_occ] if snapshot_detector and snapshot_detector._baseline_occ else None,
-            "baseline_time": snapshot_detector._baseline_time if snapshot_detector else None,
+            "baseline_occ": occ,
+            "baseline_time": b_time,
         }
         print("[SPACE] 💾 State saved for rollback (Z to undo).")
         process_human_move(src, dst, piece)
@@ -493,6 +543,7 @@ def handle_space_key():
         print(f"[SPACE] ❌ Nước đi không hợp lệ: {src}->{dst}")
         set_status("❌  Nước đi không hợp lệ!", color=(180, 0, 0))
         set_invalid_flash(dst[0], dst[1])
+        manual_override_active = True
 
 # ==========================================
 # 5. VÒNG LẶP CHÍNH
@@ -504,11 +555,11 @@ print(f"\n[GAME] === GAME STARTED ===")
 print(f"[FEN] {current_fen}")
 
 # --- Chụp T1 baseline ban đầu ---
-if snapshot_detector is not None and cam_monitor is not None:
+if cam_monitor is not None:
     print("[INIT] 📸 Chụp T1 baseline ban đầu...")
     time.sleep(1)  # Đợi camera ổn định
     frame, detections = cam_monitor.get_fresh_snapshot()
-    snapshot_detector.capture_baseline(frame, detections)
+    if yolo_detector: yolo_detector.capture_baseline(frame, detections)
 
 try:
     while running:
@@ -538,8 +589,8 @@ try:
                     reset_game()
                     continue
 
-                # Mouse move (DRY RUN only)
-                if ALLOW_MOUSE_MOVE and turn == "r" and not game_over:
+                # Mouse move (DRY RUN or Manual Override)
+                if (ALLOW_MOUSE_MOVE or manual_override_active) and turn == "r" and not game_over:
                     c, r = pixel_to_grid(mx, my)
                     if 0 <= c < NUM_COLS and 0 <= r < NUM_ROWS:
                         clicked_piece = board[r][c]
@@ -549,8 +600,21 @@ try:
                             src, dst = selected_pos, (c, r)
                             p_name = board[src[1]][src[0]]
                             if xiangqi.is_valid_move(src, dst, board, "r"):
+                                print("[UI] 🖱️ Người dùng đi cờ trên màn hình.")
                                 process_human_move(src, dst, p_name)
                                 selected_pos = None
+                                manual_override_active = False # Tắt chế độ override
+                                
+                                # Cực kì quan trọng: Chụp lại T1 ngay sau khi override
+                                # vì AI sẽ không nhận ra nước đi đã hoàn tất trên bàn thực 
+                                if cam_monitor is not None:
+                                    print("[UI] 📸 Đang chụp lại T1 baseline sau khi Override...")
+                                    set_status("📸 Cập nhật Mắt Camera...", color=(0, 100, 180), duration=2.0)
+                                    # pygame.display.update() # Mẹo để update UI ngay
+                                    time.sleep(1.0) # Đợi tay người dùng rút ra
+                                    frame, detections = cam_monitor.get_fresh_snapshot()
+                                    if yolo_detector: yolo_detector.capture_baseline(frame, detections)
+                                    
                             else:
                                 print(f"Invalid move: {src}->{dst}")
                                 set_status("❌  Invalid move!", color=(180, 0, 0))
@@ -650,15 +714,19 @@ try:
                             if xiangqi.get_king_pos('r', board) is None:
                                 handle_game_over('b')
                             else:
-                                # --- Chụp T1 mới SAU khi AI đi xong ---
-                                if snapshot_detector is not None and cam_monitor is not None:
-                                    time.sleep(1.0)  # Đợi bàn cờ ổn định sau robot di chuyển
-                                    frame, detections = cam_monitor.get_fresh_snapshot()
-                                    snapshot_detector.capture_baseline(frame, detections)
-                                
+                                # --- Xử lý T1 dựa trên có Robot hay không ---
                                 if robot.connected:
+                                    # Robot tự đi xong -> Bàn cờ đã update -> Chụp T1 ngay
+                                    if cam_monitor is not None:
+                                        time.sleep(1.0)
+                                        frame, detections = cam_monitor.get_fresh_snapshot()
+                                        if yolo_detector: yolo_detector.capture_baseline(frame, detections)
                                     set_status("Your turn! Bấm SPACE sau khi đi.", color=(0, 100, 180), duration=5.0)
                                 else:
+                                    # KHÔNG CÓ ROBOT -> Cờ thật chưa được người chơi di chuyển.
+                                    # Nên KHÔNG ĐƯỢC CHỤP T1 BÂY GIỜ. Phải hủy T1 cũ để lần SPACE tới chụp T1 mới.
+                                    if yolo_detector: yolo_detector._baseline_occ = None
+                                    
                                     # Hiển thị rõ nước đi AI trên Pygame
                                     piece_moved = board[d[1]][d[0]]  # quân đã di chuyển
                                     move_txt = f"🤖 AI: ({s[0]},{s[1]})→({d[0]},{d[1]}) | Di quân rồi bấm SPACE"
