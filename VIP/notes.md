@@ -206,6 +206,10 @@ DÙNG KHI NÀO:
   get_fresh_snapshot:   bấm SPACE, chụp T1 baseline
   get_latest:           hiển thị, debug
 
+FIX (2026-03-05): Giải quyết triệt để lỗi Snapshot Queuing (Trễ hình/Lag Delay)
+  Nguyên nhân: OpenCV tự tạo Buffer hàng đợi (queue), nhưng suy luận YOLO mất ~200ms khiến ảnh bị dồn ứ, `cap.read()` luôn lấy ra ảnh cũ trong quá khứ dẫn đến hình ảnh hiển thị trễ hơn thực tế nhiều giây.
+  Giải pháp: Dùng `cap.grab()` 5 lần liên tục trước mỗi `cap.read()` để xả trôi hết đống buffer cũ, ép OpenCV lấy đúng tấm ảnh tươi mới nhất của hiện tại (Zero Delay Real-Time). Đồng thời gỡ bỏ `time.sleep` vì bản thân YOLO chạy đủ chậm để nhường CPU rồi.
+
 ---
 
 ### B6. VIP/snapshot_detector.py  ← detect_move() khi bấm SPACE
