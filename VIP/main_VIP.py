@@ -156,18 +156,35 @@ try:
         pts_data = []
         for i in range(1, 5):
             err, data = robot.robot.GetRobotTeachingPoint(f"R{i}")
-            if err: raise Exception(f"Error getting point R{i}")
-            pts_data.append([float(data[0]), float(data[1])])
+            if err != 0:
+                raise Exception(f"Error getting teaching point R{i} (err={err})")
+            x, y = float(data[0]), float(data[1])
+            print(f"  ✅ R{i}: X={x:.3f}, Y={y:.3f}")
+            pts_data.append([x, y])
 
         src_pts_robot = np.array(pts_data, dtype=np.float32)
         M_rob = cv2.getPerspectiveTransform(dst_pts_logic, src_pts_robot)
         robot.set_perspective_matrix(M_rob)
         print("=== ROBOT CALIBRATION OK ===")
 except Exception as e:
-    print(f"⚠️ [MAIN] Robot calibration error: {e}")
-    print("   → Bỏ qua robot calibration, dùng fake matrix.")
-    src_pts_fake = np.array([[200, -100], [520, -100], [520, 260], [200, 260]], dtype=np.float32)
-    robot.set_perspective_matrix(cv2.getPerspectiveTransform(dst_pts_logic, src_pts_fake))
+    print(f"\n{'='*60}")
+    print(f"❌ [CRITICAL] Robot calibration THẤT BẠI: {e}")
+    print(f"   Lý do thường gặp:")
+    print(f"   1. Chưa dạy điểm R1-R4 trên bộ điều khiển robot")
+    print(f"   2. Tên teaching point sai (phải đặt tên R1, R2, R3, R4)")
+    print(f"   3. Mất kết nối robot khi đọc")
+    print(f"")
+    print(f"   ⚠️  Robot sẽ bị VÔ HIỆU HÓA để tránh di chuyển sai vị trí.")
+    print(f"   Hãy dạy đúng 4 điểm rồi chạy lại:")
+    print(f"     R1 = (col=0, row=0) — Xe Đen Trái  (góc trái-trên)")
+    print(f"     R2 = (col=8, row=0) — Xe Đen Phải  (góc phải-trên)")
+    print(f"     R3 = (col=8, row=9) — Xe Đỏ Phải   (góc phải-dưới)")
+    print(f"     R4 = (col=0, row=9) — Xe Đỏ Trái   (góc trái-dưới)")
+    print(f"{'='*60}\n")
+    # ⚠️ QUAN TRỌNG: Vô hiệu hóa robot thay vì dùng fake matrix
+    # (fake matrix cho tọa độ gần capture bin → robot bay sai vị trí!)
+    robot.connected = False
+    print("   Robot đã bị vô hiệu hóa. Game tiếp tục ở chế độ KHÔNG CÓ ROBOT.")
 
 # --- KHỜI TẠO PIKAFISH ENGINE (bắt buộc) ---
 engine = None
