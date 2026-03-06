@@ -79,7 +79,7 @@ class InputHandler:
         if not self.hw.yolo_detector.has_baseline():
             print("[SPACE] ⚠️ Chưa có T1 baseline — chụp ngay...")
             if self.hw.yolo_detector.capture_baseline(frame, detections):
-                self.state.set_status("📸 Đã chụp T1 baseline. Đi quân rồi bấm SPACE lại!", color=(0, 100, 180), duration=5.0)
+                self.state.set_status("📸 Đã làm mới Trạng thái bàn cờ hiện tại", color=(0, 100, 180), duration=5.0)
             else:
                 self.state.set_status("❌ Không chụp được baseline!", color=(180, 0, 0))
             return

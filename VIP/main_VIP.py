@@ -184,7 +184,7 @@ try:
                             else:
                                 if hw.robot.connected:
                                     hw.capture_baseline_if_needed(force_delay=1.0)
-                                    state.set_status("Your turn! Bấm SPACE sau khi đi.", color=(0, 100, 180), duration=5.0)
+                                    state.set_status("Your turn!", color=(0, 100, 180), duration=5.0)
                                 else:
                                     hw.clear_yolo_baseline()
                                     state.set_status(f"🤖 AI: ({s[0]},{s[1]})→({d[0]},{d[1]}) | Di quân rồi SPACE", color=(0, 80, 160), duration=30.0)

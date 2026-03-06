@@ -1,5 +1,5 @@
 # GHI CHÚ VIP — KIẾN TRÚC & TÀI LIỆU MODULE
-# Cập nhật: 2026-03-05 (session chiều — thêm RUN_VIP.bat)
+# Cập nhật: 2026-03-06 (Sửa Tool DO0, fix MoveJ singularity, Auto T1 baseline)
 # Tổng hợp từ discussion_notes.txt — không trùng lặp, sắp xếp theo module
 
 ================================================================================
@@ -77,15 +77,18 @@
   [x] Tích hợp Pikafish engine (thay ai.py PVS, qua ai_controller.py)
   [x] Phím SPACE để chụp snapshot
   [x] Xử lý pattern di chuyển thường + ăn quân (Blind Capture Resolution)
-  [x] Chỉnh PICK_Z/PLACE_Z (PICK_Z=180, PLACE_Z=190 — cập nhật 2026-03-05)
+  [x] Chỉnh PICK_Z/PLACE_Z (PICK_Z=183, PLACE_Z=190 — cập nhật 2026-03-06)
   [x] Pikafish config (PIKAFISH_EXE, PIKAFISH_NNUE, PIKAFISH_THINK_MS)
   [x] Tải Pikafish 2026-01-02 → pikafish/pikafish-avx2.exe + pikafish.nnue
   [x] Rollback (phím Z)
-  [x] robot_VIP.py — Controller DO2 thay Tool DO1
+  [x] robot_VIP.py — Tool DO0 (Đã chuyển từ Controller DO2 về Tool DO0 ở đầu cánh tay)
   [x] Tách fen_utils.py và ai_controller.py khỏi main_VIP.py
-  [x] Fix robot.connected bị set False sai khi go_to_home_chess lỗi (2026-03-05)
-  [x] Fix snapshot_detector: detect ăn quân khi YOLO thấy quân đỏ tại ô đích (2026-03-05)
-  [x] Tạo RUN_VIP.bat — double-click để chạy, không cần cmd (2026-03-05)
+  [x] Fix robot.connected bị set False sai khi go_to_home_chess lỗi
+  [x] Fix snapshot_detector: detect ăn quân khi YOLO thấy quân đỏ tại ô đích
+  [x] Tạo RUN_VIP.bat — double-click để chạy, không cần cmd
+  [x] Khắc phục tay máy bị Singularity (Lỗi 101/14/112) bằng MoveJ + GetInverseKin
+  [x] Gỡ bỏ yêu cầu bấm SPACE tạo baseline lần 2 sau lượt AI (Auto Snapshot)
+  [ ] Xác định và lưu điểm HOMECHESS lên bộ nhớ Robot để sửa lỗi err=143
   [ ] Verify bàn cờ lúc bắt đầu game (tùy chọn)
 
 ================================================================================
@@ -133,55 +136,29 @@ File điều khiển cánh tay robot FR5 — riêng cho phiên bản VIP.
 from robot_VIP import FR5Robot
 
 THAY ĐỔI SO VỚI robot.py GỐC:
-  Tool DO1 (đầu cánh tay) → Controller DO2 (bộ điều khiển)
-  Nguyên nhân: mất dây nối đến đầu cánh tay
-  self.gripper_do_id = 2
-  SetToolDO(id=1) → SetDO(id=2)
-
-📍 HƯỚNG DẪN TÌM PORT TRÊN ĐẦU CÁNH TAY (Cáp M12 8-pin):
-  Cổng Tool Flange của Fairino FR3 mặc định chỉ hỗ trợ DO0 và DO1 (Số 0 và Số 1). Việc test cũ dùng `ID=2` có thể do nhầm lẫn hoặc firmware riêng.
-  **Để tìm đúng chân kẹp trên cáp M12 8-pin, BẮT BUỘC TEST BẰNG FILE `test_tool_do2.py`:**
-  1. Vào file `test_tool_do2.py`, sửa `TOOL_DO_ID = 0` rồi chạy thử. Kẹp giật/tắt => Chân M12 đó là **DO0**.
-  2. Nếu không chạy, đổi `TOOL_DO_ID = 1` rồi chạy lại. Nếu OK => Chân đó là **DO1**.
-  3. Nếu bước 2 vẫn thất bại, đổi `TOOL_DO_ID = 2` (File cũ) rồi chạy lại.
-
-  **Sau khi test ra con số hoạt động (Giả sử là ID=1):**
-  Vào file `robot_VIP.py` sửa lại đúng 2 chỗ:
-  1. Khai báo ban đầu (Dòng 37): `self.gripper_do_id = 1`
-  2. Hàm `gripper_ctrl` (Dòng 201): `err = self.robot.SetToolDO(id=self.gripper_do_id, status=val, block=1)`
+  Nối lại dây đầu cánh tay thành công. Đã thay Controller DO2 về Tool DO0 ở đầu kẹp.
+  self.gripper_do_id = 0
+  SetDO(id=2) → SetToolDO(id=0)
 
 CÁC HÀM:
   connect()              → Kết nối robot qua RPC SDK
   board_to_pose()        → (col, row) → [x, y, z, rx, ry, rz] mm
-  movej_pose()           → Di chuyển tự do: MoveCart()
+  movej_pose()           → Di chuyển tự do an toàn: Dùng GetInverseKin + MoveJ
   movel_pose()           → Di chuyển thẳng: MoveCart()
   go_to_idle_home()      → Về IDLE (config.IDLE_X/Y/Z)
-  go_to_home_chess()     → Về điểm dạy "HOMECHESS"
-  gripper_ctrl(val)      → SetDO(id=2) — Controller DO2
+  go_to_home_chess()     → Về điểm chuẩn đã dạy điểm "HOMECHESS"
+  gripper_ctrl(val)      → SetToolDO(id=0) — Kích hoạt Tool Flange 0
   pick_at(col, row)      → Mở kẹp → đến ô → hạ → đóng kẹp → nhấc lên
   place_at(col, row)     → Đến ô → hạ → mở kẹp → nhấc lên
   place_in_capture_bin() → Thả quân bị ăn vào bãi
   move_piece(s,d,capture) → HÀM CHÍNH gọi từ main_VIP.py
 
-CONFIG: ROBOT_IP, DRY_RUN, SAFE_Z=217.227, PICK_Z=180.0, PLACE_Z=190.0  ← cập nhật 2026-03-05
+CONFIG: ROBOT_IP, DRY_RUN, SAFE_Z=217.227, PICK_Z=183.0, PLACE_Z=190.0  ← cập nhật 2026-03-06
         CAPTURE_BIN_X=-226.123, CAPTURE_BIN_Y=225.024, CAPTURE_BIN_Z=291.68
 
-FIX (2026-03-05): Tách robot.connect() và go_to_home_chess() thành 2 khối
-  try riêng trong main_VIP.py. Trước đây lỗi MoveCart 101 khi về HOMECHESS
-  (do điểm chưa dạy) lan sang làm robot.connected=False → robot không chạy.
-  Nay: lỗi go_to_home_chess chỉ in cảnh báo, KHÔNG ảnh hưởng connected.
-
-⚠️ GHI CHÚ QUAN TRỌNG VỀ LỖI SINGULARITY KHI ĐI CHÉO BÀN CỜ (Góc R2):
-  Hiện tại `movej_pose()` đang dùng hàm SDK `MoveCart` (di chuyển theo đường thẳng). Khi vươn tới các góc xa (như R2), tay máy dễ bị duỗi thẳng băng gây kẹt góc (Singularity) hoặc chạm không không gian làm việc, dẫn đến báo lỗi từ chối di chuyển.
-  → Nếu trong quá trình test lại gặp lỗi này, **hãy mở `robot_VIP.py` và sửa hàm `movej_pose` sang bản chất gốc của `MoveJ`** (tay máy quặp tự do để né giới hạn trần/tường) như sau:
-  ```python
-  # Trong hàm movej_pose(self, pose, speed), thay lệnh err = MoveCart bằng:
-  err = self.robot.MoveJ(
-      joint_pos=[0]*6, desc_pos=pose, tool=self.tool_num, user=self.user_num,
-      vel=vel, acc=0.0, ovl=100.0, exaxis_pos=[0]*4, blendT=-1.0, offset_flag=0, offset_pos=[0]*6
-  )
-  ```
-  (Lưu ý: riêng hàm `movel_pose` khi dập kẹp xuống vuông góc bàn cờ thì BUỘC PHẢI GIỮ LÀ `MoveCart`).
+FIX (2026-03-06): SINGULARITY ERROR 112/101/14
+  Đã sửa chữa lỗi vươn quá xa góc chết bằng cách thay `MoveCart` thành `MoveJ` trong hàm `movej_pose()`.
+  Do `MoveJ` bắt buộc phải có `joint_pos` khớp cụ thể, đã tích hợp thêm hàm `GetInverseKin(0, pose)` của SDK để giải động học ngược Cartesian thành các góc Joint trước khi cấp cho MoveJ.
 
 ---
 

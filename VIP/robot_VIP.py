@@ -33,8 +33,8 @@ class FR5Robot:
         self.user_num    = 1
         self.default_vel = config.MOVE_SPEED
 
-        # ⚙️ Kẹp: dùng Controller DO2 (bộ điều khiển, không phải đầu cánh tay)
-        self.gripper_do_id = 2
+        # ⚙️ Kẹp: dùng Tool DO0 (Đầu cánh tay - cáp M12)
+        self.gripper_do_id = 0
 
         # Ma trận hiệu chỉnh perspective (được set từ main_VIP.py)
         self.perspective_matrix = None
@@ -125,13 +125,26 @@ class FR5Robot:
             time.sleep(0.2)
             return 0
 
-        err = self.robot.MoveCart(
-            desc_pos=pose, tool=self.tool_num, user=self.user_num,
-            vel=vel, acc=0.0, ovl=100.0, blendT=-1.0, config=-1
+        # Giải Inverse Kinematics để lấy joint_pos
+        err, joint_pos = self.robot.GetInverseKin(0, pose, -1)
+        if err != 0 or joint_pos is None:
+            print(f"[ROBOT] ⚠️ GetInverseKin lỗi ({err}), fallback về MoveCart...")
+            err = self.robot.MoveCart(
+                desc_pos=pose, tool=self.tool_num, user=self.user_num,
+                vel=vel, acc=0.0, ovl=100.0, blendT=-1.0, config=-1
+            )
+            if err not in (0, 112):
+                print(f"[ROBOT] ❌ Lỗi MoveCart (fallback): {err}")
+                raise Exception(f"Robot MoveCart error code: {err}")
+            return err
+
+        err = self.robot.MoveJ(
+            joint_pos=joint_pos, desc_pos=pose, tool=self.tool_num, user=self.user_num,
+            vel=vel, acc=0.0, ovl=100.0, exaxis_pos=[0]*4, blendT=-1.0, offset_flag=0, offset_pos=[0]*6
         )
         if err not in (0, 112):
-            print(f"[ROBOT] ❌ Lỗi MoveCart: {err}")
-            raise Exception(f"Robot MoveCart error code: {err}")
+            print(f"[ROBOT] ❌ Lỗi MoveJ: {err}")
+            raise Exception(f"Robot MoveJ error code: {err}")
         return err
 
     def movel_pose(self, pose, speed=None):
@@ -202,14 +215,13 @@ class FR5Robot:
         # 1. Hãy dò tìm ID bằng file test_tool_do2.py trước (Thử ID=0, rồi ID=1)
         # 2. Sau khi biết ID thực (VD: 1), sửa self.gripper_do_id = 1 ở đầu file.
         # 3. Đổi hàm SetDO (dưới đây) thành SetToolDO:
-        # err = self.robot.SetToolDO(id=self.gripper_do_id, status=val, block=1)
-        err = self.robot.SetDO(
+        err = self.robot.SetToolDO(
             id=self.gripper_do_id,
             status=val,
             block=1
         )
         if err != 0:
-            print(f"[ROBOT] ❌ Lỗi SetDO (gripper): {err}")
+            print(f"[ROBOT] ❌ Lỗi SetToolDO (gripper): {err}")
         return err
 
     # -------------------------------------------------------------------------
