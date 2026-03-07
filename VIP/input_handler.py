@@ -17,7 +17,12 @@ class InputHandler:
 
         # New Game Button
         if BTN_NEW_GAME_RECT.collidepoint(mx, my):
+            import pygame
+            from difficulty_ui import show_difficulty_selection
+            screen = pygame.display.get_surface()
+            new_difficulty = show_difficulty_selection(screen)
             self.state.reset_game(self.hw)
+            self.state.difficulty = new_difficulty
             return
 
         # Manual Override (Mouse Drag)

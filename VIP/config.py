@@ -38,12 +38,19 @@ VIDEO_SOURCE = 1
 AI_THINK_TIME = 10  # Time per move in seconds — AI gets 10s after subtracting TIME_BUFFER (0.5)
 AI_DEPTH = 30          # Độ sâu mặc định (sẽ bị ghi đè bởi logic tự động)
 
+# --- MỨC ĐỘ KHÓ CỦA AI ---
+DIFFICULTY_LEVELS = {
+    "EASY": {"type": "depth", "value": 3},        # Tính trước 3 nước
+    "MEDIUM": {"type": "depth", "value": 10},     # Tính trước 10 nước
+    "HARD": {"type": "time", "value": 3000}       # Dùng hết thời gian suy nghĩ sâu nhất có thể
+}
+
 # --- PIKAFISH ENGINE ---
 # Tải từ: https://github.com/official-pikafish/Pikafish/releases
 # Tải .nnue từ: https://pikafish.org
 # Đặt cả 2 file vào thư mục: <project_root>/pikafish/
 import os as _os
-_PIKAFISH_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'pikafish')
+_PIKAFISH_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), 'pikafish')
 PIKAFISH_EXE  = _os.path.join(_PIKAFISH_DIR, 'pikafish-avx2.exe')
 PIKAFISH_NNUE = _os.path.join(_PIKAFISH_DIR, 'pikafish.nnue')
 PIKAFISH_THINK_MS = 3000  # Thời gian suy nghĩ mỗi nước (milliseconds)

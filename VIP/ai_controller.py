@@ -26,7 +26,7 @@ class AIController:
         self.engine = engine
         self.config = config
 
-    def pick_move(self, board_snapshot, color="b"):
+    def pick_move(self, board_snapshot, color="b", difficulty="HARD"):
         """Gọi Pikafish để lấy nước đi tốt nhất.
 
         Hàm này chạy BLOCKING — phải gọi trong thread riêng.
@@ -34,6 +34,7 @@ class AIController:
         Args:
             board_snapshot: bản sao board 10x9 tại thời điểm AI bắt đầu nghĩ
             color:          màu AI đang đánh ('b' = đen)
+            difficulty:     mức độ khó ('EASY', 'MEDIUM', 'HARD')
 
         Returns:
             (src, dst) tuple nếu tìm được nước đi
@@ -45,10 +46,15 @@ class AIController:
             return None
 
         try:
-            think_ms = self.config.PIKAFISH_THINK_MS
-            result = self.engine.pick_best_move(
-                board_snapshot, color, movetime_ms=think_ms
-            )
+            diff_settings = self.config.DIFFICULTY_LEVELS.get(difficulty, self.config.DIFFICULTY_LEVELS["HARD"])
+            if diff_settings["type"] == "depth":
+                result = self.engine.pick_best_move(
+                    board_snapshot, color, depth=diff_settings["value"]
+                )
+            else:
+                result = self.engine.pick_best_move(
+                    board_snapshot, color, movetime_ms=diff_settings["value"]
+                )
             return result
         except Exception as e:
             print(f"[AI] ❌ Pikafish error: {e}")

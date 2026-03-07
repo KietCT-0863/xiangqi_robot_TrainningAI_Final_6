@@ -136,14 +136,15 @@ class PikafishEngine:
     # Core public method — drop-in replacement for ai.pick_best_move()
     # -------------------------------------------------------------------------
 
-    def pick_best_move(self, board: list, color: str, movetime_ms: int = 3000):
+    def pick_best_move(self, board: list, color: str, movetime_ms: int = 3000, depth: int = None):
         """
         Ask Pikafish for the best move from the given board position.
 
         Args:
             board      : 10×9 list-of-lists (our custom format).
             color      : 'r' for Red, 'b' for Black.
-            movetime_ms: Time allowed for search, in milliseconds.
+            movetime_ms: Time allowed for search, in milliseconds (used if depth is None).
+            depth      : Limit the search to a certain depth (overrides movetime_ms if provided).
 
         Returns:
             ((src_col, src_row), (dst_col, dst_row))  in our coordinate system,
@@ -157,11 +158,17 @@ class PikafishEngine:
             print(f"[PIKAFISH] FEN: {fen}")
 
             self._send(f'position fen {fen}')
-            self._send(f'go movetime {movetime_ms}')
+            if depth is not None:
+                self._send(f'go depth {depth}')
+            else:
+                self._send(f'go movetime {movetime_ms}')
 
             # Read lines until we get 'bestmove ...'
             best_move_str = None
-            deadline = time.time() + (movetime_ms / 1000) + 5  # generous timeout
+            if depth is not None:
+                deadline = time.time() + 30  # Safety timeout for depth search
+            else:
+                deadline = time.time() + (movetime_ms / 1000) + 5  # generous timeout
             while time.time() < deadline:
                 line = self.process.stdout.readline().strip()
                 if not line:

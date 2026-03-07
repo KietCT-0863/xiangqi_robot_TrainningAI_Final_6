@@ -82,6 +82,10 @@ print(f"[FEN] {state.current_fen}")
 
 hw.capture_baseline_if_needed(force_delay=1.0)
 
+from difficulty_ui import show_difficulty_selection
+screen_surf = pygame.display.get_surface()
+state.difficulty = show_difficulty_selection(screen_surf)
+
 try:
     while running:
         # 2a. Vẽ khung hình
@@ -115,7 +119,7 @@ try:
                 state.ai_think_start = time.time()
                 
                 def _ai_worker():
-                    state.ai_result = hw.ai_ctrl.pick_move(board_snapshot, color="b")
+                    state.ai_result = hw.ai_ctrl.pick_move(board_snapshot, color="b", difficulty=state.difficulty)
                     
                 state.ai_thread = threading.Thread(target=_ai_worker, daemon=True)
                 state.ai_thread.start()

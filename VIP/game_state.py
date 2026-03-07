@@ -9,6 +9,7 @@ class GameState:
         # Core Game State
         self.current_fen = INITIAL_FEN
         self.board, self.turn = fen_to_board_array(self.current_fen)
+        self.difficulty = "HARD"
         self.game_over = False
         self.winner = None
         self.last_move = None

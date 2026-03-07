@@ -117,7 +117,7 @@ class FR5Robot:
     # DI CHUYỂN ROBOT
     # -------------------------------------------------------------------------
 
-    def movej_pose(self, pose, speed=None):
+    def move_safe_pose(self, pose, speed=None):
         """Di chuyển tự do (MoveCart) đến pose."""
         vel = speed or self.default_vel
         if self.dry:
@@ -125,26 +125,30 @@ class FR5Robot:
             time.sleep(0.2)
             return 0
 
-        # Giải Inverse Kinematics để lấy joint_pos
-        err, joint_pos = self.robot.GetInverseKin(0, pose, -1)
-        if err != 0 or joint_pos is None:
-            print(f"[ROBOT] ⚠️ GetInverseKin lỗi ({err}), fallback về MoveCart...")
-            err = self.robot.MoveCart(
-                desc_pos=pose, tool=self.tool_num, user=self.user_num,
-                vel=vel, acc=0.0, ovl=100.0, blendT=-1.0, config=-1
-            )
-            if err not in (0, 112):
-                print(f"[ROBOT] ❌ Lỗi MoveCart (fallback): {err}")
-                raise Exception(f"Robot MoveCart error code: {err}")
-            return err
+        err = self.robot.MoveCart(
+            desc_pos=pose, tool=self.tool_num, user=self.user_num,
+            vel=vel, acc=0.0, ovl=100.0, blendT=-1.0, config=-1
+        )
+        if err not in (0, 112):
+            print(f"[ROBOT] ❌ Lỗi MoveCart: {err}")
+            raise Exception(f"Robot MoveCart error code: {err}")
+        return err
 
+    def movej_joint(self, joint_pos, desc_pos, speed=None):
+        """Di chuyển trực tiếp bằng góc joint (MoveJ) nếu đã biết."""
+        vel = speed or self.default_vel
+        if self.dry:
+            print(f"[ROBOT] DRY MoveJ_Joint → vel={vel}")
+            time.sleep(0.2)
+            return 0
+            
         err = self.robot.MoveJ(
-            joint_pos=joint_pos, desc_pos=pose, tool=self.tool_num, user=self.user_num,
+            joint_pos=joint_pos, desc_pos=desc_pos, tool=self.tool_num, user=self.user_num,
             vel=vel, acc=0.0, ovl=100.0, exaxis_pos=[0]*4, blendT=-1.0, offset_flag=0, offset_pos=[0]*6
         )
         if err not in (0, 112):
-            print(f"[ROBOT] ❌ Lỗi MoveJ: {err}")
-            raise Exception(f"Robot MoveJ error code: {err}")
+            print(f"[ROBOT] ❌ Lỗi movej_joint MoveJ: {err}")
+            raise Exception(f"Robot movej_joint error code: {err}")
         return err
 
     def movel_pose(self, pose, speed=None):
@@ -172,7 +176,17 @@ class FR5Robot:
         """Đưa robot về vị trí chờ an toàn (IDLE)."""
         print("[ROBOT] Về vị trí IDLE...")
         pose = [config.IDLE_X, config.IDLE_Y, config.IDLE_Z] + list(config.ROTATION)
-        self.movej_pose(pose)
+        try:
+            self.move_safe_pose(pose)
+        except Exception as e:
+            print(f"[ROBOT] ⚠️ Lỗi khi về IDLE trực tiếp: {e}. Thử nâng Z lên cao...")
+            # Nâng Z an toàn trước khi di chuyển
+            try:
+                high_z_pose = [config.IDLE_X, config.IDLE_Y, config.IDLE_Z + 100.0] + list(config.ROTATION)
+                self.move_safe_pose(high_z_pose)
+                self.move_safe_pose(pose)
+            except Exception as e2:
+                print(f"[ROBOT] ❌ Lỗi cả khi qua điểm trung gian Z cao: {e2}")
 
     def go_to_home_chess(self):
         """Về vị trí HOMECHESS đã dạy trên bộ điều khiển."""
@@ -189,8 +203,24 @@ class FR5Robot:
                 print(f"[ROBOT] ⚠️ Không đọc được HOMECHESS (err={err}) → về IDLE")
                 self.go_to_idle_home()
                 return
-            self.movej_pose(list(data[:6]))
-            print("[ROBOT] ✅ Đã về HOMECHESS.")
+                
+            # If data contains joint pos, use it directly (data is typically >= 12 elements)
+            pose = list(data[:6])
+            
+            if len(data) >= 12:
+                joints = list(data[6:12])
+                print(f"[ROBOT] Đọc được joints HOMECHESS: {joints}")
+                try:
+                    self.movej_joint(joints, pose)
+                    print("[ROBOT] ✅ Đã về HOMECHESS (bằng Joint).")
+                    return
+                except Exception as je:
+                    print(f"[ROBOT] ⚠️ Lỗi MoveJ bằng khớp: {je}. Tiếp tục thử MoveJ Pose...")
+                    
+            # Fallback to MoveJ with pose
+            self.move_safe_pose(pose)
+            print("[ROBOT] ✅ Đã về HOMECHESS (bằng Pose).")
+            
         except Exception as e:
             print(f"[ROBOT] ⚠️ go_to_home_chess lỗi: {e} → về IDLE")
             self.go_to_idle_home()
@@ -235,7 +265,7 @@ class FR5Robot:
         print(f"[ROBOT] 🤏 Gắp tại grid=({col},{row}) → X={pose_safe[0]:.1f}, Y={pose_safe[1]:.1f}, Z={pose_safe[2]:.1f}")
 
         self.gripper_ctrl(config.GRIPPER_OPEN)   # Mở kẹp
-        self.movej_pose(pose_safe)                # Đi đến vị trí an toàn trên ô
+        self.move_safe_pose(pose_safe)                # Đi đến vị trí an toàn trên ô
         self.movel_pose(pose_pick)                # Hạ xuống
         self.gripper_ctrl(config.GRIPPER_CLOSE)  # Đóng kẹp (gắp)
         time.sleep(0.5)                           # Đợi kẹp đóng
@@ -248,7 +278,7 @@ class FR5Robot:
         pose_place = self.board_to_pose(col, row, config.PLACE_Z)
         print(f"[ROBOT] 📍 Đặt tại grid=({col},{row}) → X={pose_safe[0]:.1f}, Y={pose_safe[1]:.1f}, Z={pose_safe[2]:.1f}")
 
-        self.movej_pose(pose_safe)                # Đến vị trí an toàn
+        self.move_safe_pose(pose_safe)                # Đến vị trí an toàn
         self.movel_pose(pose_place)               # Hạ xuống
         self.gripper_ctrl(config.GRIPPER_OPEN)   # Mở kẹp (thả)
         time.sleep(0.5)                           # Đợi thả
@@ -261,7 +291,7 @@ class FR5Robot:
         pose_safe  = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, config.SAFE_Z]  + list(config.ROTATION)
         pose_place = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, config.CAPTURE_BIN_Z] + list(config.ROTATION)
 
-        self.movej_pose(pose_safe)
+        self.move_safe_pose(pose_safe)
         self.movel_pose(pose_place)
         self.gripper_ctrl(config.GRIPPER_OPEN)
         time.sleep(0.5)
