@@ -38,13 +38,20 @@ VIDEO_SOURCE = 1
 AI_THINK_TIME = 10  # Time per move in seconds — AI gets 10s after subtracting TIME_BUFFER (0.5)
 AI_DEPTH = 30          # Độ sâu mặc định (sẽ bị ghi đè bởi logic tự động)
 
+# --- AI ENGINE CONFIGURATION ---
+ENGINE_TYPE = "HYBRID" # "HYBRID" (Ưu tiên Cloud), "CLOUD" (Chỉ Cloud), "LOCAL" (Chỉ Local)
+CLOUD_API_URL = "https://tuongkydaisu.com/api/engine/bestmove"
+CLOUD_TIMEOUT_SEC = 5
+
 # --- PIKAFISH ENGINE ---
-# Tải từ: https://github.com/official-pikafish/Pikafish/releases
-# Tải .nnue từ: https://pikafish.org
-# Đặt cả 2 file vào thư mục: <project_root>/pikafish/
+# Hướng dẫn tải cho người mới clone repo:
+# 1. Tải bản mới nhất từ: https://github.com/official-pikafish/Pikafish/releases/tag/Pikafish-2026-01-02
+# 2. Giải nén vào thư mục `pikafish/` (giữ nguyên cấu trúc chứa thư mục con `Windows/`)
+# 3. Tải file `pikafish.nnue` từ https://pikafish.org/api/nnue/download/latest và bỏ nó chung vào thư mục `pikafish/`
 import os as _os
-_PIKAFISH_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'pikafish')
-PIKAFISH_EXE  = _os.path.join(_PIKAFISH_DIR, 'pikafish-avx2.exe')
+_BASE_DIR      = _os.path.dirname(_os.path.abspath(__file__))
+_PIKAFISH_DIR = _os.path.join(_BASE_DIR, 'pikafish')
+PIKAFISH_EXE  = _os.path.join(_PIKAFISH_DIR, 'Windows', 'pikafish-avx2.exe')
 PIKAFISH_NNUE = _os.path.join(_PIKAFISH_DIR, 'pikafish.nnue')
 PIKAFISH_THINK_MS = 3000  # Thời gian suy nghĩ mỗi nước (milliseconds)
 
