@@ -12,7 +12,7 @@ pip install pygame numpy opencv-python ultralytics
 [BƯỚC 2] TẢI MÔ HÌNH NHẬN DIỆN BÀN CỜ (YOLO)
 File trọng số AI đã được đính kèm sẵn trong mã nguồn tại: `models/best.pt`. (Nếu bạn là người phát triển, hãy đảm bảo file này đã được commit lên Git).
 
-### [BƯỚC 3] TẢI CHESS ENGINE (PIKAFISH) - RẤT QUAN TRỌNG
+[BƯỚC 3] TẢI CHESS ENGINE (PIKAFISH) - RẤT QUAN TRỌNG
 Vì file này rất nặng nên KHÔNG ĐƯỢC PUSH lên Git. Bạn bắt buộc phải tự tải:
 1. Tải **Pikafish 2026-01-02 AVX2** (cho Windows/Linux) từ: [Official Pikafish Releases](https://github.com/official-pikafish/Pikafish/releases)
    👉 Giải nén file 7z vừa tải thẳng vào thư mục: `pikafish/`
