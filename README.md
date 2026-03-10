@@ -18,17 +18,6 @@ Vì file này rất nặng nên KHÔNG ĐƯỢC PUSH lên Git. Bạn bắt buộ
    👉 Giải nén file 7z vừa tải thẳng vào thư mục: `pikafish/`
 2. Tải **Neural Network (.nnue)** trực tiếp từ API: [Pikafish NNUE Latest](https://pikafish.org/api/nnue/download/latest)
    👉 Bỏ riêng file `pikafish.nnue` tải được vào thư mục `pikafish/`.
-Kết quả cấu trúc chuẩn sẽ như sau:
-```text
-Dự-án-gốc/
-├── pikafish/
-│   ├── pikafish.nnue
-│   └── Windows/
-│       └── pikafish-avx2.exe
-```
-
-Đã xong! Giờ bạn có thể chạy `main.py` hoặc double click `RUN.bat` để bắt đầu.
-
 ---
 
 # PHẦN 1: CẤU TRÚC THƯ MỤC CỐT LÕI
