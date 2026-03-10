@@ -140,7 +140,7 @@ class HardwareManager:
         if self.dry_run:
             return
 
-        model_path = str(Path(self.project_dir) / "runs" / "detect" / "chess_vision" / "yolo26_occupancy_run" / "weights" / "best.pt")
+        model_path = str(Path(self.project_dir) / "models" / "best.pt")
         try:
             self.model = YOLO(model_path)
             print(f"✅ Model loaded: {model_path}")
