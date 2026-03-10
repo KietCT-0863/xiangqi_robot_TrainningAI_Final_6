@@ -116,10 +116,9 @@ class HardwareManager:
             
             if local_engine is None and not self.dry_run:
                 print("\n========================================================")
-                print("❌ KHÔNG TÌM THẤY PIKAFISH ENGINE!")
+                print("⚠️ CẢNH BÁO: KHÔNG TÌM THẤY PIKAFISH ENGINE DỰ PHÒNG LOCAL!")
+                print("   Hệ thống sẽ duy trì hoạt động bằng API Cloud Engine.")
                 print("========================================================\n")
-                if engine_type == "LOCAL":
-                    sys.exit(1)
 
         # 2. Khởi tạo Cloud Engine (nếu cần)
         if engine_type in ["HYBRID", "CLOUD"]:
