@@ -10,14 +10,16 @@ pip install pygame numpy opencv-python ultralytics
 ```
 
 [BƯỚC 2] TẢI MÔ HÌNH NHẬN DIỆN BÀN CỜ (YOLO)
-File trọng số AI đã được đính kèm sẵn trong mã nguồn tại: `models/best.pt`. (Nếu bạn là người phát triển, hãy đảm bảo file này đã được commit lên Git).
+File trọng số AI đã được đính kèm sẵn trong mã nguồn tại: `models/best.pt`.
 
-[BƯỚC 3] TẢI CHESS ENGINE (PIKAFISH) - RẤT QUAN TRỌNG
-Vì file này rất nặng nên KHÔNG ĐƯỢC PUSH lên Git. Bạn bắt buộc phải tự tải:
+[BƯỚC 3] TẢI CHESS ENGINE LOCAL (TÙY CHỌN - DÀNH CHO OFFLINE)
+Mặc định hệ thống sẽ sử dụng Cloud Engine API để tính toán. Tuy nhiên, để dự phòng khi mất mạng, bạn nên trang bị thêm Pikafish Local.
+Vì file này rất nặng nên KHÔNG ĐƯỢC PUSH lên Git. Bạn tự tải như sau:
 1. Tải **Pikafish 2026-01-02 AVX2** (cho Windows/Linux) từ: [Official Pikafish Releases](https://github.com/official-pikafish/Pikafish/releases)
    👉 Giải nén file 7z vừa tải thẳng vào thư mục: `pikafish/`
 2. Tải **Neural Network (.nnue)** trực tiếp từ API: [Pikafish NNUE Latest](https://pikafish.org/api/nnue/download/latest)
    👉 Bỏ riêng file `pikafish.nnue` tải được vào thư mục `pikafish/`.
+
 ---
 
 # PHẦN 1: CẤU TRÚC THƯ MỤC CỐT LÕI
@@ -35,7 +37,7 @@ Dự-án-gốc/
 ├── models/                   # Chứa trọng số mô hình AI nhận dạng hình ảnh
 │   └── best.pt               # File weights YOLO26 đã train (nhận diện 1 class)
 │
-├── pikafish/                 # Thư mục bắt buộc chứa engine AI Cờ Tướng 
+├── pikafish/                 # Thư mục chứa engine AI Cờ Tướng (Dự phòng Offline) 
 │   ├── pikafish.nnue         # Mạng Neural Network của Pikafish
 │   └── Windows/              # Thư mục con chứa file thực thi exe của Pikafish
 │
@@ -280,10 +282,10 @@ Render giao diện bàn cờ Pygame màn hình 800x600. Vẽ Highlight ô đỏ/
 Vòng lặp game chính (Game Loop 30FPS). Kiến trúc gọn nhẹ, đóng vai trò Controller trung tâm gọi Renderer, đưa Event vào InputHandler, và chạy Thread chờ AI đánh cờ. Hỗ trợ kích hoạt DRY_RUN tắt phụ thuộc phần mềm.
 
 #### 3.6.2. `RUN.bat`
-Script tự kích hoạt và xác minh Virtual Environment, kiểm tra sự tồn tại của Pikafish AI rồi mới khởi chạy ứng dụng tránh sập nguồn giữa trận.
+Script tự kích hoạt và xác minh Virtual Environment, khởi chạy luồng game và cảnh báo nếu thiếu Local AI.
 
 #### 3.6.3. `perspective.npy`
-File trọng số sinh ra bởi Calibrate Camera. Mất file → Hệ thống hỏng tính năng chụp ảnh AI.
+File trọng số sinh ra bởi Calibrate Camera. Mất file → Hệ thống hỏng tính năng chụp ảnh AI. Mỗi khi calibrate xong thì sẽ tạo ra 1 file `perspective.npy` ghi đè lên file cũ
 
 ---
 
