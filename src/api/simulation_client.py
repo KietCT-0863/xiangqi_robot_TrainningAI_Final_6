@@ -29,8 +29,7 @@ class TuongKyDaiSuClient:
             
             if response.status_code == 200 and data.get("success"):
                 self.room_id = data["data"]["roomId"]
-                web_room_id = str(self.room_id).zfill(6)
-                print(f"[+] [API] Tạo trận đấu thành công. Room ID API: {self.room_id} | MÃ XEM TRÊN WEB: {web_room_id}")
+                print(f"[+] [API] Tạo trận đấu thành công. Room ID: {self.room_id}")
                 return self.room_id
             else:
                 print(f"[-] [API] Lỗi tạo trận đấu: {data}")
