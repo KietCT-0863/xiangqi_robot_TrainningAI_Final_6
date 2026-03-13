@@ -47,7 +47,7 @@ Dự-án-gốc/
 │   │
 │   ├── ai/                   # Module Trí Tuệ Nhân Tạo
 │   │   ├── pikafish_engine.py# Bộ giao tiếp biên dịch lệnh UCI trực tiếp với file Exe (Local)
-│   │   ├── cloud_engine.py   # Kết nối REST API lên tuongkydaisu.com (Cloud)
+│   │   ├── cloud_engine.py   # Kết nối REST API lên tuongkydaisu.com (Cloud) 
 │   │   └── ai_controller.py  # Wrapper quản lý tầng cao giao tiếp với Game (Worker Thread)
 │   │
 │   ├── core/                 # Module Xử lý Thể thức & Logic Game
