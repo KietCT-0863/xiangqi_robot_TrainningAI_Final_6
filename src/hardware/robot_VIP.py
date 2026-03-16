@@ -91,22 +91,28 @@ class FR5Robot:
         """Chuyển đổi (col, row) bàn cờ logic → tọa độ [x,y,z,rx,ry,rz] robot (mm) bằng Toán Cứng."""
         
         # 1. Tính delta khoảng cách từ ô gốc (0,0)
-        delta_x = col * config.CELL_SIZE_X
-        delta_y = row * config.CELL_SIZE_Y
+        # HOÁN ĐỔI: col (ngang) → Y, row (dọc) → X (do hệ tọa độ robot)
+        delta_x = row * config.CELL_SIZE_Y  # row ảnh hưởng X (dọc)
+        delta_y = col * config.CELL_SIZE_X  # col ảnh hưởng Y (ngang)
         
         # Bù thêm khe hở Sông (River gap) cho các quân nằm phía Đỏ (row >= 5)
         if row >= 5:
-            delta_y += config.RIVER_GAP_Y
+            delta_x += config.RIVER_GAP_Y  # Bù vào X vì row ảnh hưởng X
             
         # 2. Áp dụng hướng (Direction) và cộng với Tọa độ gốc R1
         x_mm = config.BOARD_ORIGIN_X + (delta_x * config.ROBOT_DIR_X)
         y_mm = config.BOARD_ORIGIN_Y + (delta_y * config.ROBOT_DIR_Y)
+        
+        # 3. Áp dụng offset điều chỉnh (nếu có)
+        x_mm += config.OFFSET_X
+        y_mm += config.OFFSET_Y
 
         if abs(x_mm) > 900 or abs(y_mm) > 900:
             print(f"[ROBOT] ⚠️ Tọa độ quá xa ({x_mm:.1f}, {y_mm:.1f}) — cẩn thận đập máy!")
 
         # DEBUG: in ra console để dễ kiểm soát
-        print(f"[ROBOT] 📐 HARDCODED: board({col},{row}) → X={x_mm:.1f}mm, Y={y_mm:.1f}mm, Z={z_height:.1f}mm")
+        print(f"[ROBOT] 📐 board(col={col},row={row}) → delta_x={delta_x:.1f} (row*{config.CELL_SIZE_Y}), delta_y={delta_y:.1f} (col*{config.CELL_SIZE_X})")
+        print(f"[ROBOT] 📐 ORIGIN=({config.BOARD_ORIGIN_X:.1f},{config.BOARD_ORIGIN_Y:.1f}) + delta + OFFSET=({config.OFFSET_X:.1f},{config.OFFSET_Y:.1f}) → X={x_mm:.1f}mm, Y={y_mm:.1f}mm, Z={z_height:.1f}mm")
 
         return [x_mm, y_mm, z_height] + list(config.ROTATION)
 
@@ -281,6 +287,12 @@ class FR5Robot:
         time.sleep(0.5)                           # Đợi thả
         self.movel_pose(pose_safe)                # Nhấc lên
         print(f"[ROBOT] ✅ Đặt xong ({col},{row})")
+    
+    def move_to_extra_safe(self, col, row):
+        """Di chuyển đến độ cao cực an toàn trên ô (col, row) để tránh va chạm khi di chuyển xa."""
+        pose_extra_safe = self.board_to_pose(col, row, config.EXTRA_SAFE_Z)
+        print(f"[ROBOT] ⬆️ Nâng lên độ cao cực an toàn tại ({col},{row}) Z={config.EXTRA_SAFE_Z}")
+        self.move_safe_pose(pose_extra_safe)
 
     def place_in_capture_bin(self):
         """Thả quân bị ăn vào bãi thải."""
@@ -309,6 +321,7 @@ class FR5Robot:
         """
         print(f"[ROBOT] ♟️ Di chuyển: ({s_col},{s_row}) → ({d_col},{d_row})"
               + (" [ĂN QUÂN]" if is_capture else ""))
+        print(f"[ROBOT] 🔍 DEBUG: s_col={s_col}, s_row={s_row}, d_col={d_col}, d_row={d_row}")
 
         if not self.connected and not self.dry:
             try:
@@ -317,15 +330,32 @@ class FR5Robot:
                 print(f"[ROBOT] ❌ Không thể kết nối, hủy nước đi: {e}")
                 return
 
+        # Tính khoảng cách di chuyển để quyết định có cần nâng cao hơn không
+        distance = abs(d_col - s_col) + abs(d_row - s_row)
+        use_extra_safe = distance >= 4  # Nếu di chuyển >= 4 ô, dùng độ cao cực an toàn
+
         # 1. Nếu ăn quân: gắp quân địch → thả vào bãi thải
         if is_capture:
+            print(f"[ROBOT] 🎯 Gắp quân địch tại đích ({d_col},{d_row})")
             self.pick_at(d_col, d_row)
+            
+            # Nâng lên độ cao cực an toàn trước khi di chuyển đến bãi thải
+            if use_extra_safe:
+                self.move_to_extra_safe(d_col, d_row)
+            
             self.place_in_capture_bin()
 
         # 2. Gắp quân mình ở nguồn
+        print(f"[ROBOT] 🤏 Gắp quân mình tại nguồn ({s_col},{s_row})")
         self.pick_at(s_col, s_row)
+        
+        # Nâng lên độ cao cực an toàn nếu di chuyển xa
+        if use_extra_safe:
+            print(f"[ROBOT] 🛡️ Di chuyển xa ({distance} ô), sử dụng độ cao cực an toàn")
+            self.move_to_extra_safe(s_col, s_row)
 
         # 3. Đặt quân mình vào đích
+        print(f"[ROBOT] 📍 Đặt quân mình tại đích ({d_col},{d_row})")
         self.place_at(d_col, d_row)
 
         # 4. Về vị trí chờ

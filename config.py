@@ -8,14 +8,22 @@
 BOARD_ORIGIN_X = 200.0  
 BOARD_ORIGIN_Y = -100.0 
 
+# Offset điều chỉnh (mm) - Dùng để tinh chỉnh vị trí gắp
+# Nếu robot gắp lệch, điều chỉnh các giá trị này:
+# - OFFSET_X: Dương = dịch xuống dưới (về phía row=9), Âm = dịch lên trên (về phía row=0)
+# - OFFSET_Y: Dương = dịch sang phải (về phía col=8), Âm = dịch sang trái (về phía col=0)
+OFFSET_X = 5.0   # Robot gắp lệch lên trên 5mm → cần dịch xuống 5mm
+OFFSET_Y = 0.0   # Không lệch ngang
+
 # Chiều hướng di chuyển so với gốc R1 (1 hoặc -1)
-# 1: col tăng thì X tăng, row tăng thì Y tăng
+# LƯU Ý: Hệ tọa độ robot: X=dọc (row), Y=ngang (col)
+# 1: row tăng thì X tăng, col tăng thì Y tăng
 ROBOT_DIR_X = 1  
 ROBOT_DIR_Y = 1  
 
 # Kích thước vật lý từng ô bàn cờ (mm)
-CELL_SIZE_X = 40.75  # 326mm chia cho 8 khoảng cột
-CELL_SIZE_Y = 41.00  # 370mm chia cho 9 khoảng hàng 
+CELL_SIZE_X = 40.75  # 326mm chia cho 8 khoảng cột (ngang)
+CELL_SIZE_Y = 41.00  # 370mm chia cho 9 khoảng hàng (dọc)
 RIVER_GAP_Y = 1.00   # Bù thêm 1mm khe hở của con Sông (Nằm giữa row 4 và row 5)
 
 # Tọa độ bãi chứa quân bị ăn (X, Y, Z)
@@ -24,7 +32,8 @@ CAPTURE_BIN_Y = 225.024
 CAPTURE_BIN_Z = 291.68  # [QUAN TRỌNG] Độ cao khi thả quân vào thùng
 
 # Độ cao an toàn (mm)
-SAFE_Z  = 217.227  # Bay trên cao
+SAFE_Z  = 270.0    # Độ cao an toàn khi di chuyển giữa các ô (tăng lên để tránh hất quân)
+EXTRA_SAFE_Z = 310.0  # Độ cao cực an toàn khi di chuyển xa (tránh đường cong quét qua nhiều quân)
 PICK_Z  = 180.0   # Hạ xuống gắp (Đã nâng lên để tránh đập bàn, hạ từ từ)
 PLACE_Z = 190.0   # Hạ xuống đặt
 
