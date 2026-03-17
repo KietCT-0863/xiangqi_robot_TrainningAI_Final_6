@@ -38,6 +38,10 @@ class FR5Robot:
 
         # Ma trận hiệu chỉnh perspective (được set từ main_VIP.py)
         self.perspective_matrix = None
+        
+        # Cache teaching points để tránh Singularity
+        self.teaching_points = {}  # {name: {"pose": [x,y,z,rx,ry,rz], "joints": [j1..j6]}}
+        self.use_teaching_points = True  # Ưu tiên dùng teaching points nếu có
 
     # -------------------------------------------------------------------------
     # SET MA TRẬN TỪ NGOÀI
@@ -77,19 +81,76 @@ class FR5Robot:
             err = self.robot.Mode(0)
             if err != 0:
                 print(f"[ROBOT] ⚠️ Set Mode(0) thất bại, code={err}")
+            
+            # Load teaching points để tránh Singularity
+            self._load_teaching_points()
 
         except Exception as e:
             print(f"[ROBOT] ❌ Lỗi connect: {e}")
             self.connected = False
             raise
+    
+    def _load_teaching_points(self):
+        """Đọc teaching points R2, R3 (và các điểm khác nếu có) để tránh Singularity."""
+        if not self.connected or self.dry:
+            return
+        
+        print("[ROBOT] 📍 Đang load teaching points để tránh Singularity...")
+        
+        # Danh sách các teaching points quan trọng (R2, R3 là 2 góc xa nhất)
+        point_names = ["R2", "R3", "R4"]  # R1 đã được load trong hardware_manager
+        
+        for name in point_names:
+            try:
+                err, data = self.robot.GetRobotTeachingPoint(name)
+                if err == 0 and len(data) >= 12:  # data = [x,y,z,rx,ry,rz, j1,j2,j3,j4,j5,j6]
+                    self.teaching_points[name] = {
+                        "pose": [float(data[i]) for i in range(6)],
+                        "joints": [float(data[i]) for i in range(6, 12)]
+                    }
+                    print(f"[ROBOT]   ✅ Loaded {name}: X={data[0]:.1f}, Y={data[1]:.1f}, Z={data[2]:.1f}")
+                else:
+                    print(f"[ROBOT]   ⚠️ {name} không tồn tại (err={err}) - sẽ dùng tính toán tự động")
+            except Exception as e:
+                print(f"[ROBOT]   ⚠️ Lỗi đọc {name}: {e}")
+        
+        if len(self.teaching_points) > 0:
+            print(f"[ROBOT] ✅ Đã load {len(self.teaching_points)} teaching points")
+        else:
+            print(f"[ROBOT] ⚠️ Không có teaching points - sẽ dùng tính toán tự động (có thể gặp Singularity)")
+            self.use_teaching_points = False
 
     # -------------------------------------------------------------------------
     # CHUYỂN ĐỔI TỌA ĐỘ BÀN CỜ → ROBOT
     # -------------------------------------------------------------------------
+    
+    def _get_teaching_point_for_position(self, col, row):
+        """Kiểm tra xem vị trí (col, row) có teaching point tương ứng không."""
+        # Mapping các vị trí đặc biệt với teaching points
+        position_map = {
+            (8, 0): "R2",  # Xe Đen Phải
+            (8, 9): "R3",  # Xe Đỏ Phải  
+            (0, 9): "R4",  # Xe Đỏ Trái
+        }
+        
+        point_name = position_map.get((col, row))
+        if point_name and point_name in self.teaching_points:
+            return point_name, self.teaching_points[point_name]
+        return None, None
 
     def board_to_pose(self, col, row, z_height):
         """Chuyển đổi (col, row) bàn cờ logic → tọa độ [x,y,z,rx,ry,rz] robot (mm) bằng Toán Cứng."""
         
+        # Kiểm tra xem có teaching point cho vị trí này không
+        point_name, point_data = self._get_teaching_point_for_position(col, row)
+        if point_data and self.use_teaching_points:
+            # Dùng tọa độ từ teaching point nhưng thay đổi Z
+            pose = point_data["pose"].copy()
+            pose[2] = z_height  # Thay đổi Z theo yêu cầu
+            print(f"[ROBOT] 📍 Dùng teaching point {point_name} cho ({col},{row}) → X={pose[0]:.1f}, Y={pose[1]:.1f}, Z={z_height:.1f}")
+            return pose
+        
+        # Nếu không có teaching point, tính toán tự động
         # 1. Tính delta khoảng cách từ ô gốc (0,0)
         # HOÁN ĐỔI: col (ngang) → Y, row (dọc) → X (do hệ tọa độ robot)
         delta_x = row * config.CELL_SIZE_Y  # row ảnh hưởng X (dọc)
@@ -120,14 +181,36 @@ class FR5Robot:
     # DI CHUYỂN ROBOT
     # -------------------------------------------------------------------------
 
-    def move_safe_pose(self, pose, speed=None):
-        """Di chuyển tự do (MoveCart) đến pose."""
+    def move_safe_pose(self, pose, speed=None, col=None, row=None):
+        """Di chuyển tự do đến pose. Dùng MoveJ với teaching point nếu có để tránh Singularity."""
         vel = speed or self.default_vel
         if self.dry:
             print(f"[ROBOT] DRY MoveJ → {[round(v,1) for v in pose]} vel={vel}")
             time.sleep(0.2)
             return 0
 
+        # Kiểm tra xem có teaching point với joint angles không
+        point_name, point_data = None, None
+        if col is not None and row is not None:
+            point_name, point_data = self._get_teaching_point_for_position(col, row)
+        
+        # Nếu có teaching point với joint angles, dùng MoveJ để tránh Singularity
+        if point_data and "joints" in point_data and self.use_teaching_points:
+            print(f"[ROBOT] 🎯 Dùng MoveJ với teaching point {point_name} để tránh Singularity")
+            joint_pos = point_data["joints"]
+            # Cập nhật Z trong pose nếu cần
+            desc_pos = pose  # pose đã có Z đúng từ board_to_pose
+            
+            err = self.robot.MoveJ(
+                joint_pos=joint_pos, desc_pos=desc_pos, tool=self.tool_num, user=self.user_num,
+                vel=vel, acc=0.0, ovl=100.0, exaxis_pos=[0]*4, blendT=-1.0, offset_flag=0, offset_pos=[0]*6
+            )
+            if err not in (0, 112):
+                print(f"[ROBOT] ❌ Lỗi MoveJ: {err}")
+                raise Exception(f"Robot MoveJ error code: {err}")
+            return err
+        
+        # Nếu không có teaching point, dùng MoveCart như cũ
         err = self.robot.MoveCart(
             desc_pos=pose, tool=self.tool_num, user=self.user_num,
             vel=vel, acc=0.0, ovl=100.0, blendT=-1.0, config=-1
@@ -268,7 +351,7 @@ class FR5Robot:
         print(f"[ROBOT] 🤏 Gắp tại grid=({col},{row}) → X={pose_safe[0]:.1f}, Y={pose_safe[1]:.1f}, Z={pose_safe[2]:.1f}")
 
         self.gripper_ctrl(config.GRIPPER_OPEN)   # Mở kẹp
-        self.move_safe_pose(pose_safe)                # Đi đến vị trí an toàn trên ô
+        self.move_safe_pose(pose_safe, col=col, row=row)  # Đi đến vị trí an toàn trên ô
         self.movel_pose(pose_pick)                # Hạ xuống
         self.gripper_ctrl(config.GRIPPER_CLOSE)  # Đóng kẹp (gắp)
         time.sleep(0.5)                           # Đợi kẹp đóng
@@ -281,7 +364,7 @@ class FR5Robot:
         pose_place = self.board_to_pose(col, row, config.PLACE_Z)
         print(f"[ROBOT] 📍 Đặt tại grid=({col},{row}) → X={pose_safe[0]:.1f}, Y={pose_safe[1]:.1f}, Z={pose_safe[2]:.1f}")
 
-        self.move_safe_pose(pose_safe)                # Đến vị trí an toàn
+        self.move_safe_pose(pose_safe, col=col, row=row)  # Đến vị trí an toàn
         self.movel_pose(pose_place)               # Hạ xuống
         self.gripper_ctrl(config.GRIPPER_OPEN)   # Mở kẹp (thả)
         time.sleep(0.5)                           # Đợi thả
@@ -292,7 +375,7 @@ class FR5Robot:
         """Di chuyển đến độ cao cực an toàn trên ô (col, row) để tránh va chạm khi di chuyển xa."""
         pose_extra_safe = self.board_to_pose(col, row, config.EXTRA_SAFE_Z)
         print(f"[ROBOT] ⬆️ Nâng lên độ cao cực an toàn tại ({col},{row}) Z={config.EXTRA_SAFE_Z}")
-        self.move_safe_pose(pose_extra_safe)
+        self.move_safe_pose(pose_extra_safe, col=col, row=row)
 
     def place_in_capture_bin(self):
         """Thả quân bị ăn vào bãi thải."""
