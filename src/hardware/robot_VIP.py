@@ -377,17 +377,33 @@ class FR5Robot:
         print(f"[ROBOT] ⬆️ Nâng lên độ cao cực an toàn tại ({col},{row}) Z={config.EXTRA_SAFE_Z}")
         self.move_safe_pose(pose_extra_safe, col=col, row=row)
 
-    def place_in_capture_bin(self):
-        """Thả quân bị ăn vào bãi thải."""
+    def place_in_capture_bin(self, current_z=None):
+        """Thả quân bị ăn vào bãi thải.
+        
+        Args:
+            current_z: Độ cao hiện tại của robot (nếu None, dùng EXTRA_SAFE_Z)
+        
+        Logic:
+            1. Giữ nguyên độ cao Z hiện tại
+            2. Di chuyển X, Y đến bãi thải (bay thẳng ở độ cao cố định)
+            3. Hạ xuống thả quân
+            4. Nâng lên lại độ cao cũ
+        """
         print("[ROBOT] 🗑️ Thả quân bị ăn vào bãi...")
-        pose_safe  = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, config.SAFE_Z]  + list(config.ROTATION)
+        
+        # Nếu không truyền current_z, dùng EXTRA_SAFE_Z (độ cao cực an toàn)
+        safe_z = current_z if current_z is not None else config.EXTRA_SAFE_Z
+        
+        # Tạo pose tại bãi thải với độ cao an toàn (giữ nguyên Z)
+        pose_safe  = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, safe_z]  + list(config.ROTATION)
         pose_place = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, config.CAPTURE_BIN_Z] + list(config.ROTATION)
 
-        self.move_safe_pose(pose_safe)
-        self.movel_pose(pose_place)
+        print(f"[ROBOT] ✈️ Bay thẳng đến bãi thải ở độ cao Z={safe_z}mm (giữ nguyên Z)")
+        self.move_safe_pose(pose_safe)  # Di chuyển X, Y đến bãi thải, giữ nguyên Z
+        self.movel_pose(pose_place)     # Hạ xuống thả
         self.gripper_ctrl(config.GRIPPER_OPEN)
         time.sleep(0.5)
-        self.movel_pose(pose_safe)
+        self.movel_pose(pose_safe)      # Nâng lên lại độ cao cũ
         print("[ROBOT] ✅ Đã thả quân bị ăn.")
 
     # -------------------------------------------------------------------------
@@ -422,11 +438,12 @@ class FR5Robot:
             print(f"[ROBOT] 🎯 Gắp quân địch tại đích ({d_col},{d_row})")
             self.pick_at(d_col, d_row)
             
-            # Nâng lên độ cao cực an toàn trước khi di chuyển đến bãi thải
-            if use_extra_safe:
-                self.move_to_extra_safe(d_col, d_row)
+            # Nâng lên độ cao cực an toàn (EXTRA_SAFE_Z)
+            print(f"[ROBOT] ⬆️ Nâng lên EXTRA_SAFE_Z={config.EXTRA_SAFE_Z}mm")
+            self.move_to_extra_safe(d_col, d_row)
             
-            self.place_in_capture_bin()
+            # Bay thẳng đến bãi thải ở độ cao EXTRA_SAFE_Z (giữ nguyên Z)
+            self.place_in_capture_bin(current_z=config.EXTRA_SAFE_Z)
 
         # 2. Gắp quân mình ở nguồn
         print(f"[ROBOT] 🤏 Gắp quân mình tại nguồn ({s_col},{s_row})")
