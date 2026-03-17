@@ -32,8 +32,7 @@ CAPTURE_BIN_Y = 225.024
 CAPTURE_BIN_Z = 291.68  # [QUAN TRỌNG] Độ cao khi thả quân vào thùng
 
 # Độ cao an toàn (mm)
-SAFE_Z  = 270.0    # Độ cao an toàn khi di chuyển giữa các ô (tăng lên để tránh hất quân)
-EXTRA_SAFE_Z = 310.0  # Độ cao cực an toàn khi di chuyển xa (tránh đường cong quét qua nhiều quân)
+SAFE_Z  = 210.0    # Độ cao an toàn khi di chuyển giữa các ô (tăng lên để tránh hất quân)
 PICK_Z  = 180.0   # Hạ xuống gắp (Đã nâng lên để tránh đập bàn, hạ từ từ)
 PLACE_Z = 190.0   # Hạ xuống đặt
 

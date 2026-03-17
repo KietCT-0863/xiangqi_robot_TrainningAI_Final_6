@@ -41,7 +41,7 @@ class FR5Robot:
         
         # Cache teaching points để tránh Singularity
         self.teaching_points = {}  # {name: {"pose": [x,y,z,rx,ry,rz], "joints": [j1..j6]}}
-        self.use_teaching_points = True  # Ưu tiên dùng teaching points nếu có
+        self.use_teaching_points = True  # Luôn dùng teaching points
 
     # -------------------------------------------------------------------------
     # SET MA TRẬN TỪ NGOÀI
@@ -91,14 +91,14 @@ class FR5Robot:
             raise
     
     def _load_teaching_points(self):
-        """Đọc teaching points R2, R3 (và các điểm khác nếu có) để tránh Singularity."""
+        """Đọc teaching points R1, R2, R3, R4 để tính toán Bilinear Interpolation."""
         if not self.connected or self.dry:
             return
         
-        print("[ROBOT] 📍 Đang load teaching points để tránh Singularity...")
+        print("[ROBOT] 📍 Đang load teaching points...")
         
-        # Danh sách các teaching points quan trọng (R2, R3 là 2 góc xa nhất)
-        point_names = ["R2", "R3", "R4"]  # R1 đã được load trong hardware_manager
+        # Load 4 góc bàn cờ (bắt buộc)
+        point_names = ["R1", "R2", "R3", "R4"]
         
         for name in point_names:
             try:
@@ -110,15 +110,16 @@ class FR5Robot:
                     }
                     print(f"[ROBOT]   ✅ Loaded {name}: X={data[0]:.1f}, Y={data[1]:.1f}, Z={data[2]:.1f}")
                 else:
-                    print(f"[ROBOT]   ⚠️ {name} không tồn tại (err={err}) - sẽ dùng tính toán tự động")
+                    raise Exception(f"Teaching point {name} không tồn tại (err={err})")
             except Exception as e:
-                print(f"[ROBOT]   ⚠️ Lỗi đọc {name}: {e}")
+                print(f"[ROBOT]   ❌ Lỗi đọc {name}: {e}")
+                raise Exception(f"Thiếu teaching point {name} - Hệ thống không thể hoạt động")
         
-        if len(self.teaching_points) > 0:
-            print(f"[ROBOT] ✅ Đã load {len(self.teaching_points)} teaching points")
-        else:
-            print(f"[ROBOT] ⚠️ Không có teaching points - sẽ dùng tính toán tự động (có thể gặp Singularity)")
-            self.use_teaching_points = False
+        # Tính CELL_SIZE tự động từ 4 góc
+        self._calculate_cell_sizes_from_corners()
+        
+        print(f"[ROBOT] ✅ Đã load {len(self.teaching_points)} teaching points")
+        print(f"[ROBOT] 🎯 Sử dụng Bilinear Interpolation cho tất cả vị trí")
 
     # -------------------------------------------------------------------------
     # CHUYỂN ĐỔI TỌA ĐỘ BÀN CỜ → ROBOT
@@ -139,42 +140,120 @@ class FR5Robot:
         return None, None
 
     def board_to_pose(self, col, row, z_height):
-        """Chuyển đổi (col, row) bàn cờ logic → tọa độ [x,y,z,rx,ry,rz] robot (mm) bằng Toán Cứng."""
+        """Chuyển đổi (col, row) bàn cờ logic → tọa độ [x,y,z,rx,ry,rz] robot (mm) bằng Bilinear Interpolation."""
         
-        # Kiểm tra xem có teaching point cho vị trí này không
+        # Kiểm tra xem có teaching point trực tiếp cho vị trí cụ thể không
         point_name, point_data = self._get_teaching_point_for_position(col, row)
-        if point_data and self.use_teaching_points:
+        if point_data:
             # Dùng tọa độ từ teaching point nhưng thay đổi Z
             pose = point_data["pose"].copy()
             pose[2] = z_height  # Thay đổi Z theo yêu cầu
             print(f"[ROBOT] 📍 Dùng teaching point {point_name} cho ({col},{row}) → X={pose[0]:.1f}, Y={pose[1]:.1f}, Z={z_height:.1f}")
             return pose
         
-        # Nếu không có teaching point, tính toán tự động
-        # 1. Tính delta khoảng cách từ ô gốc (0,0)
-        # HOÁN ĐỔI: col (ngang) → Y, row (dọc) → X (do hệ tọa độ robot)
-        delta_x = row * config.CELL_SIZE_Y  # row ảnh hưởng X (dọc)
-        delta_y = col * config.CELL_SIZE_X  # col ảnh hưởng Y (ngang)
+        # Sử dụng Bilinear Interpolation cho tất cả vị trí khác
+        return self.board_to_pose_bilinear(col, row, z_height)
+
+        return [x_mm, y_mm, z_height] + list(config.ROTATION)
+
+    def _calculate_cell_sizes_from_corners(self):
+        """Tính CELL_SIZE tự động từ 4 góc teaching points."""
+        r1 = self.teaching_points["R1"]["pose"]  # (0,0) - Đen Trái
+        r2 = self.teaching_points["R2"]["pose"]  # (8,0) - Đen Phải  
+        r3 = self.teaching_points["R3"]["pose"]  # (8,9) - Đỏ Phải
+        r4 = self.teaching_points["R4"]["pose"]  # (0,9) - Đỏ Trái
+        
+        # Tính khoảng cách theo chiều Y (ngang - col)
+        distance_y_top = abs(r2[1] - r1[1])     # R1 → R2: 8 ô ngang
+        distance_y_bottom = abs(r3[1] - r4[1])  # R4 → R3: 8 ô ngang
+        cell_size_x = (distance_y_top + distance_y_bottom) / (2 * 8)
+        
+        # Tính khoảng cách theo chiều X (dọc - row)  
+        distance_x_left = abs(r4[0] - r1[0])    # R1 → R4: 9 ô dọc
+        distance_x_right = abs(r3[0] - r2[0])   # R2 → R3: 9 ô dọc
+        cell_size_y = (distance_x_left + distance_x_right) / (2 * 9)
+        
+        print(f"[ROBOT] 📏 Tự động tính CELL_SIZE từ 4 góc:")
+        print(f"[ROBOT]   CELL_SIZE_X = {cell_size_x:.2f}mm (ngang)")
+        print(f"[ROBOT]   CELL_SIZE_Y = {cell_size_y:.2f}mm (dọc)")
+        print(f"[ROBOT]   Distance Y: top={distance_y_top:.1f}mm, bottom={distance_y_bottom:.1f}mm")
+        print(f"[ROBOT]   Distance X: left={distance_x_left:.1f}mm, right={distance_x_right:.1f}mm")
+
+    def board_to_pose_bilinear(self, col, row, z_height):
+        """Tính tọa độ bằng Bilinear Interpolation từ 4 góc teaching points."""
+        try:
+            # Tọa độ logic (0-8 cho col, 0-9 cho row)
+            col_ratio = col / 8.0  # 0.0 → 1.0
+            row_ratio = row / 9.0  # 0.0 → 1.0
+            
+            # 4 góc teaching points
+            r1 = self.teaching_points["R1"]["pose"]  # (0,0) - Đen Trái
+            r2 = self.teaching_points["R2"]["pose"]  # (8,0) - Đen Phải
+            r3 = self.teaching_points["R3"]["pose"]  # (8,9) - Đỏ Phải  
+            r4 = self.teaching_points["R4"]["pose"]  # (0,9) - Đỏ Trái
+            
+            # Nội suy theo chiều ngang (col) - Hàng trên (row=0)
+            top_x = r1[0] + (r2[0] - r1[0]) * col_ratio
+            top_y = r1[1] + (r2[1] - r1[1]) * col_ratio
+            
+            # Nội suy theo chiều ngang (col) - Hàng dưới (row=9)
+            bottom_x = r4[0] + (r3[0] - r4[0]) * col_ratio
+            bottom_y = r4[1] + (r3[1] - r4[1]) * col_ratio
+            
+            # Nội suy theo chiều dọc (row)
+            final_x = top_x + (bottom_x - top_x) * row_ratio
+            final_y = top_y + (bottom_y - top_y) * row_ratio
+            
+            # Áp dụng offset điều chỉnh
+            final_x += config.OFFSET_X
+            final_y += config.OFFSET_Y
+            
+            # Kiểm tra tọa độ an toàn
+            if abs(final_x) > 900 or abs(final_y) > 900:
+                print(f"[ROBOT] ⚠️ Tọa độ quá xa ({final_x:.1f}, {final_y:.1f}) — cẩn thận đập máy!")
+            
+            print(f"[ROBOT] 🎯 Bilinear Interpolation ({col},{row}) → X={final_x:.1f}, Y={final_y:.1f}, Z={z_height:.1f}")
+            print(f"[ROBOT]   Ratios: col={col_ratio:.3f}, row={row_ratio:.3f}")
+            
+            return [final_x, final_y, z_height] + list(config.ROTATION)
+            
+        except Exception as e:
+            print(f"[ROBOT] ⚠️ Lỗi Bilinear Interpolation: {e}, fallback sang linear")
+            return self.board_to_pose_linear(col, row, z_height)
+
+    def board_to_pose_linear(self, col, row, z_height):
+        """Tính tọa độ bằng phương pháp linear từ R1 + CELL_SIZE (fallback)."""
+        # Dùng CELL_SIZE tự động tính nếu có, không thì dùng config
+        cell_x = self.auto_cell_sizes["x"]
+        cell_y = self.auto_cell_sizes["y"]
+        
+        # Lấy gốc từ R1 nếu có, không thì dùng config
+        if "R1" in self.teaching_points:
+            origin_x = self.teaching_points["R1"]["pose"][0]
+            origin_y = self.teaching_points["R1"]["pose"][1]
+        else:
+            origin_x = config.BOARD_ORIGIN_X
+            origin_y = config.BOARD_ORIGIN_Y
+        
+        # Tính delta khoảng cách từ ô gốc (0,0)
+        delta_x = row * cell_y  # row ảnh hưởng X (dọc)
+        delta_y = col * cell_x  # col ảnh hưởng Y (ngang)
         
         # Bù thêm khe hở Sông (River gap) cho các quân nằm phía Đỏ (row >= 5)
         if row >= 5:
-            delta_x += config.RIVER_GAP_Y  # Bù vào X vì row ảnh hưởng X
+            delta_x += config.RIVER_GAP_Y
             
-        # 2. Áp dụng hướng (Direction) và cộng với Tọa độ gốc R1
-        x_mm = config.BOARD_ORIGIN_X + (delta_x * config.ROBOT_DIR_X)
-        y_mm = config.BOARD_ORIGIN_Y + (delta_y * config.ROBOT_DIR_Y)
-        
-        # 3. Áp dụng offset điều chỉnh (nếu có)
-        x_mm += config.OFFSET_X
-        y_mm += config.OFFSET_Y
+        # Áp dụng hướng (Direction) và cộng với Tọa độ gốc
+        x_mm = origin_x + (delta_x * config.ROBOT_DIR_X) + config.OFFSET_X
+        y_mm = origin_y + (delta_y * config.ROBOT_DIR_Y) + config.OFFSET_Y
 
+        # Kiểm tra tọa độ an toàn
         if abs(x_mm) > 900 or abs(y_mm) > 900:
             print(f"[ROBOT] ⚠️ Tọa độ quá xa ({x_mm:.1f}, {y_mm:.1f}) — cẩn thận đập máy!")
 
-        # DEBUG: in ra console để dễ kiểm soát
-        print(f"[ROBOT] 📐 board(col={col},row={row}) → delta_x={delta_x:.1f} (row*{config.CELL_SIZE_Y}), delta_y={delta_y:.1f} (col*{config.CELL_SIZE_X})")
-        print(f"[ROBOT] 📐 ORIGIN=({config.BOARD_ORIGIN_X:.1f},{config.BOARD_ORIGIN_Y:.1f}) + delta + OFFSET=({config.OFFSET_X:.1f},{config.OFFSET_Y:.1f}) → X={x_mm:.1f}mm, Y={y_mm:.1f}mm, Z={z_height:.1f}mm")
-
+        print(f"[ROBOT] 📐 Linear calculation ({col},{row}) → X={x_mm:.1f}, Y={y_mm:.1f}, Z={z_height:.1f}")
+        print(f"[ROBOT]   CELL_SIZE: X={cell_x:.2f}, Y={cell_y:.2f}")
+        
         return [x_mm, y_mm, z_height] + list(config.ROTATION)
 
     # -------------------------------------------------------------------------
@@ -372,16 +451,16 @@ class FR5Robot:
         print(f"[ROBOT] ✅ Đặt xong ({col},{row})")
     
     def move_to_extra_safe(self, col, row):
-        """Di chuyển đến độ cao cực an toàn trên ô (col, row) để tránh va chạm khi di chuyển xa."""
-        pose_extra_safe = self.board_to_pose(col, row, config.EXTRA_SAFE_Z)
-        print(f"[ROBOT] ⬆️ Nâng lên độ cao cực an toàn tại ({col},{row}) Z={config.EXTRA_SAFE_Z}")
-        self.move_safe_pose(pose_extra_safe, col=col, row=row)
+        """Di chuyển đến độ cao an toàn trên ô (col, row)."""
+        pose_safe = self.board_to_pose(col, row, config.SAFE_Z)
+        print(f"[ROBOT] ⬆️ Nâng lên độ cao an toàn tại ({col},{row}) Z={config.SAFE_Z}")
+        self.move_safe_pose(pose_safe, col=col, row=row)
 
     def place_in_capture_bin(self, current_z=None):
         """Thả quân bị ăn vào bãi thải.
         
         Args:
-            current_z: Độ cao hiện tại của robot (nếu None, dùng EXTRA_SAFE_Z)
+            current_z: Độ cao hiện tại của robot (nếu None, dùng SAFE_Z)
         
         Logic:
             1. Giữ nguyên độ cao Z hiện tại
@@ -391,8 +470,8 @@ class FR5Robot:
         """
         print("[ROBOT] 🗑️ Thả quân bị ăn vào bãi...")
         
-        # Nếu không truyền current_z, dùng EXTRA_SAFE_Z (độ cao cực an toàn)
-        safe_z = current_z if current_z is not None else config.EXTRA_SAFE_Z
+        # Nếu không truyền current_z, dùng SAFE_Z (độ cao an toàn)
+        safe_z = current_z if current_z is not None else config.SAFE_Z
         
         # Tạo pose tại bãi thải với độ cao an toàn (giữ nguyên Z)
         pose_safe  = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, safe_z]  + list(config.ROTATION)
@@ -431,27 +510,27 @@ class FR5Robot:
 
         # Tính khoảng cách di chuyển để quyết định có cần nâng cao hơn không
         distance = abs(d_col - s_col) + abs(d_row - s_row)
-        use_extra_safe = distance >= 4  # Nếu di chuyển >= 4 ô, dùng độ cao cực an toàn
+        use_extra_safe = distance >= 4  # Nếu di chuyển >= 4 ô, dùng độ cao an toàn
 
         # 1. Nếu ăn quân: gắp quân địch → thả vào bãi thải
         if is_capture:
             print(f"[ROBOT] 🎯 Gắp quân địch tại đích ({d_col},{d_row})")
             self.pick_at(d_col, d_row)
             
-            # Nâng lên độ cao cực an toàn (EXTRA_SAFE_Z)
-            print(f"[ROBOT] ⬆️ Nâng lên EXTRA_SAFE_Z={config.EXTRA_SAFE_Z}mm")
+            # Nâng lên độ cao an toàn (SAFE_Z)
+            print(f"[ROBOT] ⬆️ Nâng lên SAFE_Z={config.SAFE_Z}mm")
             self.move_to_extra_safe(d_col, d_row)
             
-            # Bay thẳng đến bãi thải ở độ cao EXTRA_SAFE_Z (giữ nguyên Z)
-            self.place_in_capture_bin(current_z=config.EXTRA_SAFE_Z)
+            # Bay thẳng đến bãi thải ở độ cao SAFE_Z (giữ nguyên Z)
+            self.place_in_capture_bin(current_z=config.SAFE_Z)
 
         # 2. Gắp quân mình ở nguồn
         print(f"[ROBOT] 🤏 Gắp quân mình tại nguồn ({s_col},{s_row})")
         self.pick_at(s_col, s_row)
         
-        # Nâng lên độ cao cực an toàn nếu di chuyển xa
+        # Nâng lên độ cao an toàn nếu di chuyển xa
         if use_extra_safe:
-            print(f"[ROBOT] 🛡️ Di chuyển xa ({distance} ô), sử dụng độ cao cực an toàn")
+            print(f"[ROBOT] 🛡️ Di chuyển xa ({distance} ô), sử dụng độ cao an toàn")
             self.move_to_extra_safe(s_col, s_row)
 
         # 3. Đặt quân mình vào đích
