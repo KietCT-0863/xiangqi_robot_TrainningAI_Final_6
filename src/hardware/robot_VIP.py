@@ -261,35 +261,14 @@ class FR5Robot:
     # -------------------------------------------------------------------------
 
     def move_safe_pose(self, pose, speed=None, col=None, row=None):
-        """Di chuyển tự do đến pose. Dùng MoveJ với teaching point nếu có để tránh Singularity."""
+        """Di chuyển an toàn đến pose. Luôn dùng MoveCart để đảm bảo đường thẳng."""
         vel = speed or self.default_vel
         if self.dry:
-            print(f"[ROBOT] DRY MoveJ → {[round(v,1) for v in pose]} vel={vel}")
+            print(f"[ROBOT] DRY MoveCart → {[round(v,1) for v in pose]} vel={vel}")
             time.sleep(0.2)
             return 0
 
-        # Kiểm tra xem có teaching point với joint angles không
-        point_name, point_data = None, None
-        if col is not None and row is not None:
-            point_name, point_data = self._get_teaching_point_for_position(col, row)
-        
-        # Nếu có teaching point với joint angles, dùng MoveJ để tránh Singularity
-        if point_data and "joints" in point_data and self.use_teaching_points:
-            print(f"[ROBOT] 🎯 Dùng MoveJ với teaching point {point_name} để tránh Singularity")
-            joint_pos = point_data["joints"]
-            # Cập nhật Z trong pose nếu cần
-            desc_pos = pose  # pose đã có Z đúng từ board_to_pose
-            
-            err = self.robot.MoveJ(
-                joint_pos=joint_pos, desc_pos=desc_pos, tool=self.tool_num, user=self.user_num,
-                vel=vel, acc=0.0, ovl=100.0, exaxis_pos=[0]*4, blendT=-1.0, offset_flag=0, offset_pos=[0]*6
-            )
-            if err not in (0, 112):
-                print(f"[ROBOT] ❌ Lỗi MoveJ: {err}")
-                raise Exception(f"Robot MoveJ error code: {err}")
-            return err
-        
-        # Nếu không có teaching point, dùng MoveCart như cũ
+        # Luôn dùng MoveCart để đảm bảo di chuyển thẳng, tránh đá quân cờ
         err = self.robot.MoveCart(
             desc_pos=pose, tool=self.tool_num, user=self.user_num,
             vel=vel, acc=0.0, ovl=100.0, blendT=-1.0, config=-1
