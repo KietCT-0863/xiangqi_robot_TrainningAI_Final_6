@@ -1,20 +1,19 @@
 # =============================================================================
 # === FILE: moonfish_engine.py ===
-# === Bridge between our custom board format and the Moonfish UCI engine. ===
+# === Bridge between our custom board format and the Moonfish UCCI engine. ===
 # =============================================================================
 #
 # SETUP:
-#   1. Download Moonfish for Windows from: https://github.com/official-pikafish/Pikafish/releases
-#      (e.g. moonfish-windows-x86-64-avx2.exe)
-#   2. Download the NNUE network file from: http://test.pikafish.org
-#      (e.g. moonfish.nnue)
-#   3. Place BOTH files in:  <project_root>/moonfish/
-#   4. Set MOONFISH_PATH in config.py OR pass the path directly to MoonfishEngine().
+#   Moonfish is a Python-based Xiangqi engine cloned from:
+#   https://github.com/walker8088/moonfish.git
+#   
+#   The engine files should be in: <project_root>/moonfish/
+#   Main file: moonfish_ucci.py
 #
 # USAGE (drop-in replacement for ai.pick_best_move):
 #
 #   from src.ai.moonfish_engine import MoonfishEngine
-#   engine = MoonfishEngine("moonfish/moonfish-windows-x86-64-avx2.exe")
+#   engine = MoonfishEngine("moonfish/moonfish_ucci.py")
 #   engine.start()
 #   move = engine.pick_best_move(board, "b", movetime_ms=3000)
 #   engine.stop()
@@ -28,17 +27,17 @@ import atexit
 
 class MoonfishEngine:
     """
-    UCI bridge for the Pikafish Xiangqi engine.
+    UCCI bridge for the Moonfish Xiangqi engine (Python-based).
 
     Coordinate systems:
       - Our board  : board[row][col], row=0 is Black's back rank, row=9 is Red's back rank
-      - UCI / FEN  : ranks 0-9 from RED's back rank upward → '0' == our row 9, '9' == our row 0
+      - UCCI / FEN : ranks 0-9 from RED's back rank upward → '0' == our row 9, '9' == our row 0
                      files a-i → columns 0-8 left-to-right
     """
 
     # -------------------------------------------------------------------------
     # Piece mapping: our token → FEN character  (upper=Red, lower=Black)
-    # Note: Elephant = 'B' (bishop) in standard Pikafish FEN
+    # Note: Elephant = 'B' (bishop) in standard Xiangqi FEN
     # -------------------------------------------------------------------------
     _PIECE_TO_FEN = {
         'r_K': 'K', 'r_A': 'A', 'r_E': 'B', 'r_N': 'N',
@@ -50,12 +49,12 @@ class MoonfishEngine:
     def __init__(self, engine_path: str):
         """
         Args:
-            engine_path: Absolute or relative path to the Pikafish .exe file.
+            engine_path: Absolute or relative path to moonfish_ucci.py
         """
         if not os.path.isfile(engine_path):
             raise FileNotFoundError(
-                f"[PIKAFISH] Engine not found at: {engine_path}\n"
-                "Download from: https://github.com/official-pikafish/Pikafish/releases"
+                f"[MOONFISH] Engine not found at: {engine_path}\n"
+                "Clone from: https://github.com/walker8088/moonfish.git"
             )
         self.engine_path = engine_path
         self.process: subprocess.Popen | None = None
@@ -68,14 +67,16 @@ class MoonfishEngine:
 
     def start(self, nnue_path: str | None = None):
         """
-        Launch the Pikafish subprocess and wait for 'uciok'.
+        Launch the Moonfish Python subprocess and wait for 'ucciok'.
 
         Args:
-            nnue_path: Optional path to the .nnue network file.
-                       If None, Pikafish will look for it next to the exe.
+            nnue_path: Not used for Moonfish (kept for compatibility).
         """
+        import sys
+        
+        # Run Python script with current Python interpreter
         self.process = subprocess.Popen(
-            [self.engine_path],
+            [sys.executable, self.engine_path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -87,21 +88,17 @@ class MoonfishEngine:
         # Đăng ký atexit handler để đảm bảo subprocess bị kill khi thoát
         atexit.register(self._atexit_cleanup)
 
-        # Optionally tell the engine where the NNUE file is
-        if nnue_path and os.path.isfile(nnue_path):
-            self._send(f'setoption name EvalFile value {os.path.abspath(nnue_path)}')
+        self._send('ucci')
 
-        self._send('uci')
-
-        # Wait for 'uciok' (with 10-second timeout)
+        # Wait for 'ucciok' (with 10-second timeout)
         deadline = time.time() + 10
         while time.time() < deadline:
             line = self.process.stdout.readline().strip()
-            if line == 'uciok':
+            if line == 'ucciok':
                 self._ready = True
-                print("[PIKAFISH] ✅ Engine ready!")
+                print("[MOONFISH] ✅ Engine ready!")
                 return
-        raise RuntimeError("[PIKAFISH] Engine did not respond with 'uciok' in time.")
+        raise RuntimeError("[MOONFISH] Engine did not respond with 'ucciok' in time.")
 
     def _atexit_cleanup(self):
         """Được gọi bởi atexit — force kill subprocess nếu vẫn còn chạy."""
@@ -109,7 +106,7 @@ class MoonfishEngine:
             try:
                 self.process.kill()
                 self.process.wait(timeout=2)
-                print("[PIKAFISH] 🛑 atexit: subprocess killed.")
+                print("[MOONFISH] 🛑 atexit: subprocess killed.")
             except Exception:
                 pass
 
@@ -127,7 +124,7 @@ class MoonfishEngine:
                     self.process.kill()
             self.process = None
             self._ready = False
-            print("[PIKAFISH] Engine stopped.")
+            print("[MOONFISH] Engine stopped.")
 
     def __del__(self):
         self.stop()
@@ -138,7 +135,7 @@ class MoonfishEngine:
 
     def pick_best_move(self, board: list, color: str, movetime_ms: int = 3000, depth: int = None):
         """
-        Ask Pikafish for the best move from the given board position.
+        Ask Moonfish for the best move from the given board position.
 
         Args:
             board      : 10×9 list-of-lists (our custom format).
@@ -151,11 +148,11 @@ class MoonfishEngine:
             or None if the engine has no move.
         """
         if not self._ready:
-            raise RuntimeError("[PIKAFISH] Engine is not started. Call engine.start() first.")
+            raise RuntimeError("[MOONFISH] Engine is not started. Call engine.start() first.")
 
         with self._lock:
             fen = self.board_to_fen(board, color)
-            print(f"[PIKAFISH] FEN: {fen}")
+            print(f"[MOONFISH] FEN: {fen}")
 
             self._send(f'position fen {fen}')
             if depth is not None:
@@ -176,13 +173,13 @@ class MoonfishEngine:
                 if line.startswith('bestmove'):
                     parts = line.split()
                     best_move_str = parts[1] if len(parts) > 1 else None
-                    print(f"[PIKAFISH] bestmove: {best_move_str}")
+                    print(f"[MOONFISH] bestmove: {best_move_str}")
                     break
 
             if best_move_str and best_move_str != '(none)' and best_move_str != 'null':
                 return self._uci_to_move(best_move_str)
 
-            print("[PIKAFISH] ⚠️ No valid move returned.")
+            print("[MOONFISH] ⚠️ No valid move returned.")
             return None
 
     # -------------------------------------------------------------------------
@@ -228,16 +225,16 @@ class MoonfishEngine:
 
     def _uci_to_move(self, uci_move: str):
         """
-        Convert a UCI move string to our ((src_col, src_row), (dst_col, dst_row)) format.
+        Convert a UCCI move string to our ((src_col, src_row), (dst_col, dst_row)) format.
 
-        UCI move format: <file><rank><file><rank>  e.g. 'h2e2', 'e9e8'
+        UCCI move format: <file><rank><file><rank>  e.g. 'h2e2', 'e9e8'
           - file: 'a'–'i' → column 0–8
-          - rank: '0'–'9' → UCI rank (0 = Red's back rank = our row 9)
+          - rank: '0'–'9' → UCCI rank (0 = Red's back rank = our row 9)
         """
         if len(uci_move) < 4:
             return None
         src_col = ord(uci_move[0]) - ord('a')      # 'a'=0 ... 'i'=8
-        src_row = 9 - int(uci_move[1])             # UCI rank 0 → our row 9, rank 9 → our row 0
+        src_row = 9 - int(uci_move[1])             # UCCI rank 0 → our row 9, rank 9 → our row 0
         dst_col = ord(uci_move[2]) - ord('a')
         dst_row = 9 - int(uci_move[3])
         return (src_col, src_row), (dst_col, dst_row)
@@ -259,16 +256,15 @@ if __name__ == '__main__':
     import sys
     from src.core import xiangqi
 
-    exe = input("Enter path to pikafish exe: ").strip().strip('"')
-    nnue = input("Enter path to .nnue file (or blank): ").strip().strip('"') or None
+    script_path = input("Enter path to moonfish_ucci.py: ").strip().strip('"')
 
-    engine = PikafishEngine(exe)
-    engine.start(nnue_path=nnue)
+    engine = MoonfishEngine(script_path)
+    engine.start()
 
     board = xiangqi.get_board()
     print("\nStarting position FEN:", engine.board_to_fen(board, 'r'))
 
-    print("\nAsking Pikafish for best move for Black...")
+    print("\nAsking Moonfish for best move for Black...")
     move = engine.pick_best_move(board, 'b', movetime_ms=2000)
     print(f"Best move: {move}")
 

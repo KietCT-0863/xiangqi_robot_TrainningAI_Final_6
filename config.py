@@ -73,8 +73,8 @@ SIMULATION_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzaW11bGF0aW9uMDAxIiwicm9sZSI
 import os as _os
 _BASE_DIR      = _os.path.dirname(_os.path.abspath(__file__))
 _MOONFISH_DIR = _os.path.join(_BASE_DIR, 'moonfish')
-MOONFISH_EXE  = _os.path.join(_MOONFISH_DIR, 'Windows', 'moonfish-avx2.exe')
-MOONFISH_NNUE = _os.path.join(_MOONFISH_DIR, 'moonfish.nnue')
+MOONFISH_EXE  = _os.path.join(_MOONFISH_DIR, 'moonfish_ucci.py')
+MOONFISH_NNUE = None  # Moonfish doesn't use NNUE
 MOONFISH_THINK_MS = 3000  # Thời gian suy nghĩ mỗi nước (milliseconds)
 
 # Tọa độ về nhà (Home) để né Camera
