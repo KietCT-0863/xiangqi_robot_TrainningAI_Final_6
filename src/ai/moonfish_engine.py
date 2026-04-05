@@ -1,20 +1,20 @@
 # =============================================================================
-# === FILE: pikafish_engine.py ===
-# === Bridge between our custom board format and the Pikafish UCI engine. ===
+# === FILE: moonfish_engine.py ===
+# === Bridge between our custom board format and the Moonfish UCI engine. ===
 # =============================================================================
 #
 # SETUP:
-#   1. Download Pikafish for Windows from: https://github.com/official-pikafish/Pikafish/releases
-#      (e.g. pikafish-windows-x86-64-avx2.exe)
+#   1. Download Moonfish for Windows from: https://github.com/official-pikafish/Pikafish/releases
+#      (e.g. moonfish-windows-x86-64-avx2.exe)
 #   2. Download the NNUE network file from: http://test.pikafish.org
-#      (e.g. pikafish.nnue)
-#   3. Place BOTH files in:  <project_root>/pikafish/
-#   4. Set PIKAFISH_PATH in config.py OR pass the path directly to PikafishEngine().
+#      (e.g. moonfish.nnue)
+#   3. Place BOTH files in:  <project_root>/moonfish/
+#   4. Set MOONFISH_PATH in config.py OR pass the path directly to MoonfishEngine().
 #
 # USAGE (drop-in replacement for ai.pick_best_move):
 #
-#   from src.ai.pikafish_engine import PikafishEngine
-#   engine = PikafishEngine("pikafish/pikafish-windows-x86-64-avx2.exe")
+#   from src.ai.moonfish_engine import MoonfishEngine
+#   engine = MoonfishEngine("moonfish/moonfish-windows-x86-64-avx2.exe")
 #   engine.start()
 #   move = engine.pick_best_move(board, "b", movetime_ms=3000)
 #   engine.stop()
@@ -26,7 +26,7 @@ import os
 import atexit
 
 
-class PikafishEngine:
+class MoonfishEngine:
     """
     UCI bridge for the Pikafish Xiangqi engine.
 
@@ -253,7 +253,7 @@ class PikafishEngine:
 
 
 # =============================================================================
-# Quick self-test  (run: python pikafish_engine.py)
+# Quick self-test  (run: python moonfish_engine.py)
 # =============================================================================
 if __name__ == '__main__':
     import sys

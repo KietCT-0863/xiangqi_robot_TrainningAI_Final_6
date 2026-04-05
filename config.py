@@ -72,10 +72,10 @@ SIMULATION_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzaW11bGF0aW9uMDAxIiwicm9sZSI
 # 3. Tải file `pikafish.nnue` từ https://pikafish.org/api/nnue/download/latest và bỏ nó chung vào thư mục `pikafish/`
 import os as _os
 _BASE_DIR      = _os.path.dirname(_os.path.abspath(__file__))
-_PIKAFISH_DIR = _os.path.join(_BASE_DIR, 'pikafish')
-PIKAFISH_EXE  = _os.path.join(_PIKAFISH_DIR, 'Windows', 'pikafish-avx2.exe')
-PIKAFISH_NNUE = _os.path.join(_PIKAFISH_DIR, 'pikafish.nnue')
-PIKAFISH_THINK_MS = 3000  # Thời gian suy nghĩ mỗi nước (milliseconds)
+_MOONFISH_DIR = _os.path.join(_BASE_DIR, 'moonfish')
+MOONFISH_EXE  = _os.path.join(_MOONFISH_DIR, 'Windows', 'moonfish-avx2.exe')
+MOONFISH_NNUE = _os.path.join(_MOONFISH_DIR, 'moonfish.nnue')
+MOONFISH_THINK_MS = 3000  # Thời gian suy nghĩ mỗi nước (milliseconds)
 
 # Tọa độ về nhà (Home) để né Camera
 IDLE_X = -72.027

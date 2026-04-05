@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 
 from src.hardware.robot_VIP import FR5Robot
-from src.ai.pikafish_engine import PikafishEngine
+from src.ai.moonfish_engine import MoonfishEngine
 from src.ai.cloud_engine import CloudEngine
 from src.ai.ai_controller import AIController
 from src.vision.camera_monitor import CameraMonitor
@@ -97,21 +97,21 @@ class HardwareManager:
         local_engine = None
         cloud_engine = None
 
-        # 1. Khởi tạo Local Pikafish (nếu cần)
+        # 1. Khởi tạo Local Moonfish (nếu cần)
         if engine_type in ["HYBRID", "LOCAL"]:
             try:
-                exe_path = self.config.PIKAFISH_EXE
-                nnue_path = self.config.PIKAFISH_NNUE
-                local_engine = PikafishEngine(exe_path)
+                exe_path = self.config.MOONFISH_EXE
+                nnue_path = self.config.MOONFISH_NNUE
+                local_engine = MoonfishEngine(exe_path)
                 local_engine.start(nnue_path=nnue_path)
-                print(f"✅ Pikafish engine started! (think={self.config.PIKAFISH_THINK_MS}ms)")
+                print(f"✅ Moonfish engine started! (think={self.config.MOONFISH_THINK_MS}ms)")
             except Exception as e:
-                print(f"⚠️ Pikafish init error: {e}")
+                print(f"⚠️ Moonfish init error: {e}")
                 local_engine = None
             
             if local_engine is None and not self.dry_run:
                 print("\n========================================================")
-                print("⚠️ CẢNH BÁO: KHÔNG TÌM THẤY PIKAFISH ENGINE DỰ PHÒNG LOCAL!")
+                print("⚠️ CẢNH BÁO: KHÔNG TÌM THẤY MOONFISH ENGINE DỰ PHÒNG LOCAL!")
                 print("   Hệ thống sẽ duy trì hoạt động bằng API Cloud Engine.")
                 print("========================================================\n")
 
