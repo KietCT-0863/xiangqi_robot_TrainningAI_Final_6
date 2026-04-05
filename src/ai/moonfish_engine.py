@@ -75,14 +75,19 @@ class MoonfishEngine:
         import sys
         
         # Run Python script with current Python interpreter
+        # Use absolute path for the script
+        script_path = os.path.abspath(self.engine_path)
+        script_dir = os.path.dirname(script_path)
+        script_name = os.path.basename(script_path)
+        
         self.process = subprocess.Popen(
-            [sys.executable, self.engine_path],
+            [sys.executable, script_name],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,  # Capture stderr for debugging
             encoding='utf-8',
             bufsize=1,            # line-buffered
-            cwd=os.path.dirname(os.path.abspath(self.engine_path)),
+            cwd=script_dir,  # Run in the script's directory
         )
 
         # Đăng ký atexit handler để đảm bảo subprocess bị kill khi thoát
@@ -91,13 +96,38 @@ class MoonfishEngine:
         self._send('ucci')
 
         # Wait for 'ucciok' (with 10-second timeout)
+        # Moonfish prints "Moonfish" first, then waits for commands
         deadline = time.time() + 10
+        found_name = False
         while time.time() < deadline:
             line = self.process.stdout.readline().strip()
+            if not line:
+                # Check stderr for errors
+                if self.process.stderr:
+                    err_line = self.process.stderr.readline().strip()
+                    if err_line:
+                        print(f"[MOONFISH] stderr: {err_line}")
+                continue
+            
+            print(f"[MOONFISH] DEBUG: Received line: '{line}'")  # Debug output
+            
+            # Moonfish prints its name first
+            if line == 'Moonfish' or 'Moonfish' in line:
+                found_name = True
+                print("[MOONFISH] Engine name received.")
+                continue
+            
             if line == 'ucciok':
                 self._ready = True
                 print("[MOONFISH] ✅ Engine ready!")
                 return
+        
+        if found_name:
+            # Engine responded but didn't send ucciok - might be waiting for more input
+            self._ready = True
+            print("[MOONFISH] ✅ Engine ready (name received)!")
+            return
+            
         raise RuntimeError("[MOONFISH] Engine did not respond with 'ucciok' in time.")
 
     def _atexit_cleanup(self):
