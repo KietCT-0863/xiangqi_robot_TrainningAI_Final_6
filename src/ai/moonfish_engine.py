@@ -109,12 +109,13 @@ class MoonfishEngine:
                         print(f"[MOONFISH] stderr: {err_line}")
                 continue
             
-            print(f"[MOONFISH] DEBUG: Received line: '{line}'")  # Debug output
+            # Debug output (comment out for production)
+            # print(f"[MOONFISH] DEBUG: Received line: '{line}'")
             
             # Moonfish prints its name first
             if line == 'Moonfish' or 'Moonfish' in line:
                 found_name = True
-                print("[MOONFISH] Engine name received.")
+                # print("[MOONFISH] Engine name received.")
                 continue
             
             if line == 'ucciok':
@@ -170,8 +171,8 @@ class MoonfishEngine:
         Args:
             board      : 10×9 list-of-lists (our custom format).
             color      : 'r' for Red, 'b' for Black.
-            movetime_ms: Time allowed for search, in milliseconds (used if depth is None).
-            depth      : Limit the search to a certain depth (overrides movetime_ms if provided).
+            movetime_ms: Time allowed for search, in milliseconds (converted to depth).
+            depth      : Limit the search to a certain depth (if None, calculated from movetime_ms).
 
         Returns:
             ((src_col, src_row), (dst_col, dst_row))  in our coordinate system,
@@ -185,20 +186,27 @@ class MoonfishEngine:
             print(f"[MOONFISH] FEN: {fen}")
 
             self._send(f'position fen {fen}')
-            if depth is not None:
-                self._send(f'go depth {depth}')
-            else:
-                self._send(f'go movetime {movetime_ms}')
+            
+            # Moonfish doesn't support movetime properly, use depth instead
+            if depth is None:
+                # Convert movetime to approximate depth (rough estimate)
+                # 1000ms ~ depth 3, 3000ms ~ depth 5, 5000ms ~ depth 6
+                if movetime_ms <= 1000:
+                    depth = 3
+                elif movetime_ms <= 3000:
+                    depth = 5
+                else:
+                    depth = 6
+            
+            self._send(f'go depth {depth}')
 
             # Read lines until we get 'bestmove ...'
             best_move_str = None
-            if depth is not None:
-                deadline = time.time() + 30  # Safety timeout for depth search
-            else:
-                deadline = time.time() + (movetime_ms / 1000) + 5  # generous timeout
+            deadline = time.time() + 30  # Safety timeout
             while time.time() < deadline:
                 line = self.process.stdout.readline().strip()
                 if not line:
+                    time.sleep(0.01)
                     continue
                 if line.startswith('bestmove'):
                     parts = line.split()
