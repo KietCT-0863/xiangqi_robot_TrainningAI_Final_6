@@ -104,11 +104,15 @@ class FR5Robot:
             try:
                 err, data = self.robot.GetRobotTeachingPoint(name)
                 if err == 0 and len(data) >= 12:  # data = [x,y,z,rx,ry,rz, j1,j2,j3,j4,j5,j6]
+                    # Safe convert string to float
+                    pose_data = [float(str(data[i]).strip()) for i in range(6)]
+                    joint_data = [float(str(data[i]).strip()) for i in range(6, 12)]
+                    
                     self.teaching_points[name] = {
-                        "pose": [float(data[i]) for i in range(6)],
-                        "joints": [float(data[i]) for i in range(6, 12)]
+                        "pose": pose_data,
+                        "joints": joint_data
                     }
-                    print(f"[ROBOT]   ✅ Loaded {name}: X={data[0]:.1f}, Y={data[1]:.1f}, Z={data[2]:.1f}")
+                    print(f"[ROBOT]   ✅ Loaded {name}: X={pose_data[0]:.1f}, Y={pose_data[1]:.1f}, Z={pose_data[2]:.1f}")
                 else:
                     raise Exception(f"Teaching point {name} không tồn tại (err={err})")
             except Exception as e:
