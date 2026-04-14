@@ -1,6 +1,4 @@
 # Thư mục chứa AI Engine (Quá lớn, tải thủ công)
-pikafish/*
-!pikafish/.keep
 moonfish/*
 !moonfish/.keep
 !moonfish/README.md

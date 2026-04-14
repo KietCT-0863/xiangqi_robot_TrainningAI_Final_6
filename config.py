@@ -33,7 +33,7 @@ CAPTURE_BIN_Z = 291.68  # [QUAN TRỌNG] Độ cao khi thả quân vào thùng
 
 # Độ cao an toàn (mm)
 SAFE_Z  = 210.0    # Độ cao an toàn khi di chuyển giữa các ô (tăng lên để tránh hất quân)
-PICK_Z  = 180.0   # Hạ xuống gắp (Đã nâng lên để tránh đập bàn, hạ từ từ)
+PICK_Z  = 185.0   # Hạ xuống gắp (Đã nâng lên để tránh đập bàn, hạ từ từ)
 PLACE_Z = 190.0   # Hạ xuống đặt
 
 # Cấu hình Kẹp (Gripper) - Tùy chỉnh theo loại van của bạn
@@ -65,11 +65,10 @@ CLOUD_TIMEOUT_SEC = 5
 SIMULATION_API_URL = "https://tuongkydaisu.com"
 SIMULATION_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzaW11bGF0aW9uMDAxIiwicm9sZSI6IlNJTVVMQVRJT04iLCJ0b2tlbklkIjoiMTlkYjRjMDEtNjk4My00MTU5LTllNzYtODk0NDU5YjJhMjM5IiwiaWF0IjoxNzczMTI3MTE5LCJleHAiOjE4MDQ2NjMxMTl9.cHQEzHS-SqrZqUZ9FRcJgUE_BzyxZ60iiy7xYzZPQOo" # Liên hệ admin để lấy Token cấp cho app. Điền vào đây.
 
-# --- PIKAFISH ENGINE ---
-# Hướng dẫn tải cho người mới clone repo:
-# 1. Tải bản mới nhất từ: https://github.com/official-pikafish/Pikafish/releases/tag/Pikafish-2026-01-02
-# 2. Giải nén vào thư mục `pikafish/` (giữ nguyên cấu trúc chứa thư mục con `Windows/`)
-# 3. Tải file `pikafish.nnue` từ https://pikafish.org/api/nnue/download/latest và bỏ nó chung vào thư mục `pikafish/`
+# --- MOONFISH ENGINE ---
+# Hướng dẫn cho người mới clone repo:
+# 1. Clone Moonfish engine: git clone https://github.com/walker8088/moonfish.git moonfish
+# 2. Moonfish không cần NNUE file, chạy trực tiếp bằng Python
 import os as _os
 _BASE_DIR      = _os.path.dirname(_os.path.abspath(__file__))
 _MOONFISH_DIR = _os.path.join(_BASE_DIR, 'moonfish')
