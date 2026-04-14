@@ -75,7 +75,7 @@ _BASE_DIR      = _os.path.dirname(_os.path.abspath(__file__))
 _MOONFISH_DIR = _os.path.join(_BASE_DIR, 'moonfish')
 MOONFISH_EXE  = _os.path.join(_MOONFISH_DIR, 'moonfish_ucci.py')
 MOONFISH_NNUE = None  # Moonfish doesn't use NNUE
-MOONFISH_THINK_MS = 3000  # Thời gian suy nghĩ mỗi nước (milliseconds)
+MOONFISH_THINK_MS = 1000  # Thời gian suy nghĩ mỗi nước (milliseconds)
 
 # Tọa độ về nhà (Home) để né Camera
 IDLE_X = -72.027
