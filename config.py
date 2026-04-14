@@ -33,7 +33,7 @@ CAPTURE_BIN_Z = 291.68  # [QUAN TRỌNG] Độ cao khi thả quân vào thùng
 
 # Độ cao an toàn (mm)
 SAFE_Z  = 210.0    # Độ cao an toàn khi di chuyển giữa các ô (tăng lên để tránh hất quân)
-PICK_Z  = 180.0   # Hạ xuống gắp (Đã nâng lên để tránh đập bàn, hạ từ từ)
+PICK_Z  = 185.0   # Hạ xuống gắp (Đã nâng lên để tránh đập bàn, hạ từ từ)
 PLACE_Z = 190.0   # Hạ xuống đặt
 
 # Cấu hình Kẹp (Gripper) - Tùy chỉnh theo loại van của bạn
