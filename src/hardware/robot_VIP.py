@@ -104,11 +104,15 @@ class FR5Robot:
             try:
                 err, data = self.robot.GetRobotTeachingPoint(name)
                 if err == 0 and len(data) >= 12:  # data = [x,y,z,rx,ry,rz, j1,j2,j3,j4,j5,j6]
+                    # Safe convert string to float
+                    pose_data = [float(str(data[i]).strip()) for i in range(6)]
+                    joint_data = [float(str(data[i]).strip()) for i in range(6, 12)]
+                    
                     self.teaching_points[name] = {
-                        "pose": [float(data[i]) for i in range(6)],
-                        "joints": [float(data[i]) for i in range(6, 12)]
+                        "pose": pose_data,
+                        "joints": joint_data
                     }
-                    print(f"[ROBOT]   ✅ Loaded {name}: X={data[0]:.1f}, Y={data[1]:.1f}, Z={data[2]:.1f}")
+                    print(f"[ROBOT]   ✅ Loaded {name}: X={pose_data[0]:.1f}, Y={pose_data[1]:.1f}, Z={pose_data[2]:.1f}")
                 else:
                     raise Exception(f"Teaching point {name} không tồn tại (err={err})")
             except Exception as e:
@@ -117,6 +121,23 @@ class FR5Robot:
         
         # Tính CELL_SIZE tự động từ 4 góc
         self._calculate_cell_sizes_from_corners()
+        
+        # Load R_Trash (optional - không bắt buộc)
+        try:
+            err, data = self.robot.GetRobotTeachingPoint("R_Trash")
+            if err == 0 and len(data) >= 12:
+                pose_data = [float(str(data[i]).strip()) for i in range(6)]
+                joint_data = [float(str(data[i]).strip()) for i in range(6, 12)]
+                
+                self.teaching_points["R_Trash"] = {
+                    "pose": pose_data,
+                    "joints": joint_data
+                }
+                print(f"[ROBOT]   ✅ Loaded R_Trash: X={pose_data[0]:.1f}, Y={pose_data[1]:.1f}, Z={pose_data[2]:.1f}")
+            else:
+                print(f"[ROBOT]   ⚠️ R_Trash không tồn tại, sẽ dùng tọa độ config backup")
+        except Exception as e:
+            print(f"[ROBOT]   ⚠️ Không load được R_Trash: {e} (sẽ dùng config backup)")
         
         print(f"[ROBOT] ✅ Đã load {len(self.teaching_points)} teaching points")
         print(f"[ROBOT] 🎯 Sử dụng Bilinear Interpolation cho tất cả vị trí")
@@ -261,35 +282,14 @@ class FR5Robot:
     # -------------------------------------------------------------------------
 
     def move_safe_pose(self, pose, speed=None, col=None, row=None):
-        """Di chuyển tự do đến pose. Dùng MoveJ với teaching point nếu có để tránh Singularity."""
+        """Di chuyển an toàn đến pose. Luôn dùng MoveCart để đảm bảo đường thẳng."""
         vel = speed or self.default_vel
         if self.dry:
-            print(f"[ROBOT] DRY MoveJ → {[round(v,1) for v in pose]} vel={vel}")
+            print(f"[ROBOT] DRY MoveCart → {[round(v,1) for v in pose]} vel={vel}")
             time.sleep(0.2)
             return 0
 
-        # Kiểm tra xem có teaching point với joint angles không
-        point_name, point_data = None, None
-        if col is not None and row is not None:
-            point_name, point_data = self._get_teaching_point_for_position(col, row)
-        
-        # Nếu có teaching point với joint angles, dùng MoveJ để tránh Singularity
-        if point_data and "joints" in point_data and self.use_teaching_points:
-            print(f"[ROBOT] 🎯 Dùng MoveJ với teaching point {point_name} để tránh Singularity")
-            joint_pos = point_data["joints"]
-            # Cập nhật Z trong pose nếu cần
-            desc_pos = pose  # pose đã có Z đúng từ board_to_pose
-            
-            err = self.robot.MoveJ(
-                joint_pos=joint_pos, desc_pos=desc_pos, tool=self.tool_num, user=self.user_num,
-                vel=vel, acc=0.0, ovl=100.0, exaxis_pos=[0]*4, blendT=-1.0, offset_flag=0, offset_pos=[0]*6
-            )
-            if err not in (0, 112):
-                print(f"[ROBOT] ❌ Lỗi MoveJ: {err}")
-                raise Exception(f"Robot MoveJ error code: {err}")
-            return err
-        
-        # Nếu không có teaching point, dùng MoveCart như cũ
+        # Luôn dùng MoveCart để đảm bảo di chuyển thẳng, tránh đá quân cờ
         err = self.robot.MoveCart(
             desc_pos=pose, tool=self.tool_num, user=self.user_num,
             vel=vel, acc=0.0, ovl=100.0, blendT=-1.0, config=-1
@@ -457,32 +457,52 @@ class FR5Robot:
         self.move_safe_pose(pose_safe, col=col, row=row)
 
     def place_in_capture_bin(self, current_z=None):
-        """Thả quân bị ăn vào bãi thải.
+        """Thả quân bị ăn vào bãi thải sử dụng teaching point R_Trash.
         
         Args:
             current_z: Độ cao hiện tại của robot (nếu None, dùng SAFE_Z)
         
         Logic:
-            1. Giữ nguyên độ cao Z hiện tại
-            2. Di chuyển X, Y đến bãi thải (bay thẳng ở độ cao cố định)
-            3. Hạ xuống thả quân
-            4. Nâng lên lại độ cao cũ
+            1. Về home trước (waypoint an toàn)
+            2. Từ home đi đến R_Trash bằng MoveJ (sử dụng teaching point)
+            3. Thả quân
+            4. Về home
         """
         print("[ROBOT] 🗑️ Thả quân bị ăn vào bãi...")
         
-        # Nếu không truyền current_z, dùng SAFE_Z (độ cao an toàn)
-        safe_z = current_z if current_z is not None else config.SAFE_Z
+        # Bước 1: Về home trước (waypoint an toàn)
+        print(f"[ROBOT] 🏠 Về home trước khi đi bãi thải (tránh đường cong)")
+        self.go_to_home_chess()
         
-        # Tạo pose tại bãi thải với độ cao an toàn (giữ nguyên Z)
-        pose_safe  = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, safe_z]  + list(config.ROTATION)
-        pose_place = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, config.CAPTURE_BIN_Z] + list(config.ROTATION)
-
-        print(f"[ROBOT] ✈️ Bay thẳng đến bãi thải ở độ cao Z={safe_z}mm (giữ nguyên Z)")
-        self.move_safe_pose(pose_safe)  # Di chuyển X, Y đến bãi thải, giữ nguyên Z
-        self.movel_pose(pose_place)     # Hạ xuống thả
+        # Bước 2: Sử dụng teaching point R_Trash để đi đến bãi thải
+        if "R_Trash" in self.teaching_points:
+            print(f"[ROBOT] ✈️ Sử dụng teaching point R_Trash để đi bãi thải")
+            trash_joints = self.teaching_points["R_Trash"]["joints"]
+            trash_pose = self.teaching_points["R_Trash"]["pose"]
+            
+            # Di chuyển đến R_Trash bằng MoveJ (an toàn hơn)
+            err = self.movej_joint(trash_joints, trash_pose)
+            if err not in (0, 112):
+                print(f"[ROBOT] ⚠️ Không thể đến R_Trash, dùng tọa độ config backup")
+                # Fallback: dùng tọa độ từ config
+                safe_z = current_z if current_z is not None else config.SAFE_Z
+                pose_safe = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, safe_z] + list(config.ROTATION)
+                self.move_safe_pose(pose_safe)
+        else:
+            print(f"[ROBOT] ⚠️ Không tìm thấy R_Trash, dùng tọa độ config")
+            # Fallback: dùng tọa độ từ config
+            safe_z = current_z if current_z is not None else config.SAFE_Z
+            pose_safe = [config.CAPTURE_BIN_X, config.CAPTURE_BIN_Y, safe_z] + list(config.ROTATION)
+            self.move_safe_pose(pose_safe)
+        
+        # Bước 3: Thả quân
         self.gripper_ctrl(config.GRIPPER_OPEN)
         time.sleep(0.5)
-        self.movel_pose(pose_safe)      # Nâng lên lại độ cao cũ
+        
+        # Bước 4: Về home sau khi thả xong (chuẩn bị cho bước tiếp theo)
+        print(f"[ROBOT] 🏠 Về home sau khi thả quân (chuẩn bị bước tiếp theo)")
+        self.go_to_home_chess()
+        
         print("[ROBOT] ✅ Đã thả quân bị ăn.")
 
     # -------------------------------------------------------------------------

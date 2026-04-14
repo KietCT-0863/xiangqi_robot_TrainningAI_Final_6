@@ -81,8 +81,8 @@ class HardwareManager:
                 err, data = self.robot.robot.GetRobotTeachingPoint("R1")
                 if err != 0:
                     raise Exception(f"Error getting teaching point R1 (err={err})")
-                self.config.BOARD_ORIGIN_X = float(data[0])
-                self.config.BOARD_ORIGIN_Y = float(data[1])
+                self.config.BOARD_ORIGIN_X = float(str(data[0]).strip())
+                self.config.BOARD_ORIGIN_Y = float(str(data[1]).strip())
                 print(f"  ✅ Đã lấy gốc R1 thực tế: X={self.config.BOARD_ORIGIN_X:.3f}, Y={self.config.BOARD_ORIGIN_Y:.3f}")
 
             print("=== ROBOT CALIBRATION OK ===")
